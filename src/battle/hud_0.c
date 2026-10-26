@@ -350,7 +350,9 @@ static void PauseMenu_PortLobby(void) {
             }
         }
         for (i = 0; i < gPauseMenuResultVersus.count; i++) {
-            if (result[i].id == 0x13 || result[i].id == 0xD || (k == 1 && result[i].id == 0xE)) {
+            /* (and its title picture, a row with a negative text number: BtlMenu_Draw puts the first line of words
+               one row down for it, so without it the words sat a row low and the last one below the box) */
+            if (result[i].text[0] < 0 || result[i].id == 0x13 || result[i].id == 0xD || (k == 1 && result[i].id == 0xE)) {
                 sLobbyResult[k][sLobbyResultCount[k]] = result[i];
                 if (result[i].id == 0xE) { /* "Return to Vs Menu" reads "Back to the Lobby" (hud_0_b.c) */
                     sLobbyResult[k][sLobbyResultCount[k]].text[0] = 0x6FFE;
