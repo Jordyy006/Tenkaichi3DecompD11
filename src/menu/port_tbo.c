@@ -340,6 +340,7 @@ typedef struct TboScreen {
     s32 host;           /* this side opened the room */
     s32 waitFrom;       /* frames when the search began */
     s32 found;          /* the other player is there: the match is starting */
+    s32 launchIn;       /* ... in this many frames (the page says so first: the session holds the last picture shown) */
     s32 ended;          /* Port_NetSessionsEnded when it started: a change says the match has been played */
     s32 waitBack;       /* the screen a cancelled search goes back to */
     /* Quick Match */
@@ -583,13 +584,22 @@ static s32 Tb_SearchNews(void) {
         Tb_SetMode(TB_HUB);
         return 1;
     }
+    if (sTb->found && sTb->launchIn > 0) {
+        /* The session begins at the game's next blank, from the game's first moment, and holds the picture that
+           was shown last while it starts: a few frames of "YOUR RIVAL IS HERE!" first, so that is the picture
+           (launched at once, it was the search's, "SEARCHING..."). */
+        if (--sTb->launchIn == 0) {
+            Port_LobbyLaunch();
+        }
+        return 1;
+    }
     state = sTb->found ? 2 : Port_LobbyPoll();
     if (state == 2 && !sTb->found) {
         sTb->found = 1;
+        sTb->launchIn = 4;
         sTb->ended = Port_NetSessionsEnded();
         Snd_PlaySe(1, 1);
         Tb_SetMode(TB_WAIT);
-        Port_LobbyLaunch(); /* the session begins at the game's next blank, from the game's first moment */
         return 1;
     }
     if (state == 5 && !sTb->found) { /* the code was a lobby's: this game is its member now (gs/net_lobby.c) */
