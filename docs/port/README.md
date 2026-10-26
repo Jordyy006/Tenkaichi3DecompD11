@@ -3901,3 +3901,23 @@ as much as with this one: this machine, not the netcode; the spectator tests abo
 Unchanged: a match of two with a spectator (whole state identical over 8,090 blanks), 0.1.38.7 against this build
 both ways (fight values identical over 4,380 fight blanks), `node port/matchmaking/test.mjs` (17 new checks for lobbies, the earlier ones unchanged). The
 Windows build compiles (mingw-w64).
+
+## Online: the goodbye says why the match ended (2026-10-26)
+
+A match that ended with "The other player left the match." could not be told apart: the other game says goodbye
+(T_BYE) whenever its session ends in order, whether its player left for the menus or it had stopped hearing this one.
+Seen by the user: a quick match ended so after five fights at a 300 ms round trip, and the log could not say which.
+
+The goodbye's word (until now 0, or BYE_APART for a desync) says why: BYE_LEFT (the player left: the menus, or the
+match ended for a reason of this side's), BYE_QUIT (the program was closed: an atexit goodbye, so the other side knows
+at once instead of after QUIET_NS of silence; before, closing the window mid-match gave "The connection to the other
+player was lost." six seconds later), BYE_LOST (this game stopped hearing the other one). The other side shows "left the
+match", "The other player's game was closed", or "The other player's game lost contact with yours (a connection
+problem on one side or between you)". When one direction fails both games soon wait for each other's input, so the one
+that notices first says LOST; the message does not say on which side the problem was, because it cannot know.
+
+Compatible both ways: 0.1.38.8 and older take any word but BYE_APART as "left the match", as before; a goodbye of 0
+from them is shown as that too. Tested offscreen with two copies by address (`BT3_SESSION_TEST`): leaving
+(`BT3_SESSION_LEAVE`), a killed program (SIGTERM: the atexit goodbye), and a one-way failure (new test switch
+`BT3_NET_MUTE_AT=<blank>`: this game's packets stop reaching the other from that blank), and each against the 0.1.38.7
+and 0.1.38.8 releases.

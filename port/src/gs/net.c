@@ -498,6 +498,17 @@ static void send_to_peer(const void *buf, int n) {
     if (sLoss != 0 && (rand() % 100) < sLoss) {
         return;
     }
+    {   /* testing: BT3_NET_MUTE_AT=<blank>: from that blank this game's packets stop reaching the other one (the way
+           from here to there failing, as the other side sees it: its game stops hearing this one) */
+        static int muteAt = -2;
+        extern unsigned Port_NetTick(void);
+        if (muteAt == -2) {
+            muteAt = getenv("BT3_NET_MUTE_AT") != NULL ? atoi(getenv("BT3_NET_MUTE_AT")) : -1;
+        }
+        if (muteAt >= 0 && sConnected && Port_NetTick() >= (unsigned)muteAt) {
+            return;
+        }
+    }
     if (sLatencyMs > 0 && n <= (int)sizeof(sQueue[0].data) && sQueueTail - sQueueHead < 256) {
         sQueue[sQueueTail % 256].due = SDL_GetTicksNS() + (uint64_t)sLatencyMs * 1000000ull;
         sQueue[sQueueTail % 256].n = n;
@@ -517,6 +528,13 @@ static void send_to_peer(const void *buf, int n) {
    note of its own for the same blank compares, and when they differ the match ends on both sides with a message
    saying so. A dozen bytes a packet and a few hundred bytes hashed twice a second. */
 enum { SYNC_EVERY = 32, SYNC_SLOTS = 64, BYE_APART = 0x41504152 };
+/* Why a game says goodbye (the T_BYE word; a release before 0.1.38.9 sends 0 or BYE_APART, and shows every other
+   word as "left the match"): its player left the match (the menus), its program was closed, or it stopped hearing
+   the other game (QUIET_NS without the input it waited for). The other side's screen and log say which. */
+enum { BYE_LEFT = 0x5446454C, BYE_QUIT = 0x54495551, BYE_LOST = 0x54534F4C };
+static uint32_t sByeHeard; /* the word of the goodbye heard (0: none, or an older release's) */
+static int sByeSent;       /* this session's goodbye has gone out */
+static void bye_at_exit(void);
 typedef struct { uint32_t tick; uint64_t value; } SyncNote;
 static SyncNote sSyncMine[SYNC_SLOTS], sSyncTheirs[SYNC_SLOTS];
 static uint32_t sSyncOutTick, sByeWhy;
@@ -1565,6 +1583,7 @@ static int receive(void) {
             }
             if (sGone < 3) { /* (a lobby's own end, said first, stays what the screen says) */
                 sGone = why == BYE_APART ? 2 : 1;
+                sByeHeard = why;
             }
         } else if (type == T_HELLO && sMode == 1 && !(n >= 12 && memcmp(pkt + 8, &kVersion, 4) == 0)) {
             static int said;
@@ -1858,6 +1877,15 @@ static void net_start(int role, const char *host, const char *join) {
     sSyncOutTick = 0;
     sSyncOutValue = 0;
     sByeWhy = 0;
+    sByeHeard = 0;
+    sByeSent = 0;
+    {
+        static int armed;
+        if (!armed) {
+            armed = 1;
+            atexit(bye_at_exit);
+        }
+    }
     sTheirAhead = 0;
     sBalance = 0;
     sRollbacks = sRollTicks = sStalls = 0;
@@ -2229,11 +2257,33 @@ static void gone(unsigned tick) {
            its leaving the lobby (then the owner's word of it follows) */
         ended("Back to the lobby.", tick);
     }
-    ended(sGone == 2 ? "The two games no longer agree (desync): the match has ended." : "The other player left the match.", tick);
+    if (sByeWhy == 0) {
+        sByeWhy = BYE_LEFT; /* (this game leaves because the other one did) */
+    }
+    ended(sGone == 2 ? "The two games no longer agree (desync): the match has ended." :
+          sByeHeard == BYE_QUIT ? "The other player's game was closed: the match has ended." :
+          sByeHeard == BYE_LOST ? "The other player's game lost contact with yours (a connection problem on one side or between you): the match has ended." :
+          "The other player left the match.", tick);
 }
 
 static void gone_quiet(unsigned tick) {
+    sByeWhy = BYE_LOST; /* (said to the other side on the way out, in case it still hears this one) */
     ended("The connection to the other player was lost.", tick);
+}
+
+/* The program ends (its window closed, the game quit: atexit) in a match: the other game is told so at once, instead
+   of finding out from the silence after QUIET_NS. */
+static void bye_at_exit(void) {
+    uint32_t bye[3] = {MAGIC, T_BYE, sByeWhy != 0 ? sByeWhy : BYE_QUIT}; /* (a match that ended for a reason of its own says that one) */
+    int k;
+    if (sByeSent || sMode == 3 || sSock < 0 || !sConnected) {
+        return;
+    }
+    sByeSent = 1;
+    for (k = 0; k < 3; k++) {
+        net_send(bye, sizeof(bye), &sPeer);
+    }
+    fprintf(stderr, "bt3: net: the program ends: the other player is told\n");
 }
 
 /*
@@ -3022,8 +3072,9 @@ void Port_NetLeave(void) {
         }
         Port_UiBanner(NULL, 0);
     } else if (sSock >= 0 && sConnected) { /* tell the other side, so that it does not wait for input that will not come */
-        uint32_t bye[3] = {MAGIC, T_BYE, sByeWhy}, specBye[2] = {MAGIC, T_SPEC_BYE};
+        uint32_t bye[3] = {MAGIC, T_BYE, sByeWhy != 0 ? sByeWhy : BYE_LEFT}, specBye[2] = {MAGIC, T_SPEC_BYE};
         int k, i;
+        sByeSent = 1;
         for (k = 0; k < 3; k++) {
             net_send(bye, sizeof(bye), &sPeer);
         }
