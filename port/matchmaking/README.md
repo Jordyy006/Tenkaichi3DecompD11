@@ -20,6 +20,8 @@ The table `rooms`, one row per room (rows older than ten minutes are removed whe
 
 | `queue` | a quick-match room: which queue it waits in (`S`, `T`, `D10`, `D15`, `D20`); empty for a room with a code to hand on |
 | `who` | a quick-match room: a random text the host's game made up for this run, so that a room it left behind is not given back to it |
+| `loc` | a quick-match room of a newer game: where Cloudflare placed its host, rounded ("25,55,ME,": whole degrees, the region) and what the host chose ("" Auto, "*" Anywhere, or a region) |
+| `join_region` | ... and the region of the one who joined it |
 
 ## Spectators (from the release after 0.1.38.7)
 
@@ -107,6 +109,46 @@ asked for per search, not per room: a search that starts again says it holds a r
 Older releases of the game are not affected: they do not send the new request, and rooms with codes work as before.
 Until the Worker is updated, a game that has the Quick match tab says "The matchmaking service does not know quick
 match yet." when a search is started.
+
+## Quick match: nearby first, and a region to choose (from the release after 0.1.38.8)
+
+A game that sends `waited` (how many seconds it has searched) and `area` ("auto", "any", or a region) is matched by
+where Cloudflare places the requests (`request.cf`), as the player chose:
+
+- **auto**: the nearest waiting room within `NEAR_KM` (2,500 km, great-circle) at once; once the searcher or the room
+  has waited `WIDEN_SECONDS` (25), any room, the nearest first (rooms of older games, whose place is unknown, last);
+- **a region** (`NA`, `SA`, `EU`, `ME`, `AF`, `AS`, `OC`): only rooms placed in that region whose host chose auto or
+  the same region, never widened; its own room is taken only by players placed there who chose auto or that region;
+- **any**: whoever waits longest (of the rooms it may have), as before.
+
+The regions are Cloudflare's continents, except the Middle East: the countries AE, BH, CY, EG, IL, IQ, IR, JO, KW,
+LB, OM, PS, QA, SA, SY, TR, YE (`MIDDLE_EAST` in worker.js).
+
+When nobody suits, it gets a room of its own; the answer says `again` (10) and, for auto, `widen` (25). The game
+then searches again every `again` seconds from its room: `/v1/quick` with its room's `code` and `key` (not counted
+against the 60 searches an hour). The room is held meanwhile (`join_key` "-"), so nobody joins it in that moment;
+the answer is a join (its own room deleted), "still waiting" (the same code), `joined: true` (someone had joined it:
+its poll has them) or "no room" (run out: it searches anew). Each side gets the other's region as `region`, with the
+join's answer and with the host's poll; nothing else of the other's place.
+
+**What is kept, privacy.** Per quick-match room of a newer game, for the room's life only (ten minutes at most): the
+host's position rounded to whole degrees (about 100 km), its region and its choice; the joiner's region. Never
+logged; no country, city, colo or exact position is stored or sent to anyone.
+
+**Older games** (no `waited`) are answered as before: the longest waiting (passing a room whose host chose a region
+they may not be in), no new fields in any answer. Their rooms have no place and are taken by newer games as unknown:
+auto after the widening, any at once, a region never.
+
+**Updating a Worker that is already set up** (in this order):
+
+1. D1 -> `bt3-rooms` -> Console. Run these two lines, one at a time:
+   `ALTER TABLE rooms ADD COLUMN loc TEXT;`
+   `ALTER TABLE rooms ADD COLUMN join_region TEXT;`
+2. The Worker -> Edit code: replace everything with the new `worker.js`, Deploy.
+
+Without the columns the Worker still works: rooms are made without a place (every newer game then meets others only
+after the widening, by order of waiting). Requests: a waiting newer game asks `/v1/quick` every ten seconds besides
+its polls (60 more requests per ten minutes of waiting).
 
 ## Only the newest release (from 0.1.29)
 
@@ -257,7 +299,8 @@ official release). The first is the kinder one; do both if the key is known to b
 ## What it keeps
 
 For at most ten minutes per room: the room code, the two player names, the addresses each game reported about
-itself, and the host's address as Cloudflare saw it (to limit how many rooms one address can open). A room whose
+itself, and the host's address as Cloudflare saw it (to limit how many rooms one address can open); for a
+quick-match room of a newer game, where Cloudflare placed the two players, coarsely (see the quick match's section). A room whose
 host lets spectators in lives while its match is on (the host keeps it, see Spectators), a lobby's room while its
 owner keeps it open, and a spectator's or a lobby member's name and addresses are kept for two minutes. Nothing else, and nothing after the room has expired.
 

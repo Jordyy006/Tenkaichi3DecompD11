@@ -29,7 +29,7 @@ SOURCES = [ROOT / "src/menu/port_tbo.c", ROOT / "port/src/spec_menu.c"]
 NOT_SHOWN = {"Port_Setting", "Port_SettingSave", "Port_SettingText", "Port_SettingTextSave", "strncmp", "strcmp",
              "getenv", "fopen", "fprintf", "printf", "Port_LagMark", "SDL_SetClipboardText"}
 # Tables whose strings are not words.
-NOT_SHOWN_TABLES = {"sTbKeys", "sTbNameKeys"}
+NOT_SHOWN_TABLES = {"sTbKeys", "sTbNameKeys", "sTbRegionArea"}
 # Where a line is shown, for the translator's note (the function it is in).
 NOTES = {
     "Tb_Help": "talk box at the foot of the screen (two lines at most)",

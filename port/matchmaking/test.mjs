@@ -11,9 +11,12 @@ const { worker, network, sameNetwork } = await import(copy);
 const rooms = new Map(), used = new Map(), watchers = new Map();
 let rowids = 0;
 let noLobbyColumn = false; // (a database made before lobbies: rooms without the column)
+let noLocColumn = false;   // (a database made before nearby quick match: rooms without `loc` and `join_region`)
+const HELD = "-";
 const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; return this; },
     async all() { const a = this.args;
         if (sql.startsWith("SELECT addrs FROM watchers")) { return { results: [...watchers.values()].filter((w) => w.code === a[0] && w.made >= a[1]).sort((x, y) => x.made - y.made).map((w) => ({ addrs: w.addrs })) }; }
+        if (sql.startsWith("SELECT rowid AS rid, * FROM rooms WHERE queue")) { return { results: [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2]).sort((x, y) => x.rowid - y.rowid).slice(0, a[3]).map((r) => ({ rid: r.rowid, ...r })) }; }
         if (sql.startsWith("SELECT queue, COUNT")) { const m = new Map(); for (const r of rooms.values()) { if (r.queue !== null && r.version === a[0] && r.join_key === null && r.made >= a[1]) m.set(r.queue, (m.get(r.queue) ?? 0) + 1); } return { results: [...m].map(([queue, n]) => ({ queue, n })) }; }
         throw new Error("all: " + sql); },
     async first() { const a = this.args;
@@ -35,7 +38,11 @@ const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; retur
         if (sql.startsWith("INSERT INTO watchers")) { watchers.set(a[0], { key: a[0], code: a[1], made: a[2], name: a[3], addrs: a[4] }); return {}; }
         if (sql.startsWith("UPDATE rooms SET made")) { const r = rooms.get(a[1]); if (r) r.made = a[0]; return {}; }
         if (sql.startsWith("INSERT INTO used")) { used.set(a[0] + "|" + a[1], a[2]); return {}; }
-        if (sql.startsWith("INSERT INTO rooms")) { if (rooms.has(a[0])) throw new Error("taken"); if (sql.includes("lobby") && noLobbyColumn) throw new Error("D1_ERROR: table rooms has no column named lobby"); rooms.set(a[0], { code: a[0], made: a[1], version: a[2], ip: a[3], host_key: a[4], join_key: null, host_name: a[5], join_name: null, host_addrs: a[6], join_addrs: null, queue: a[7] ?? null, who: a[8] ?? null, ...(sql.includes("lobby") ? { lobby: 1 } : noLobbyColumn ? {} : { lobby: null }), rowid: ++rowids }); return {}; }
+        if (sql.startsWith("INSERT INTO rooms") && sql.includes(", loc)")) { if (noLocColumn) throw new Error("D1_ERROR: table rooms has no column named loc"); if (rooms.has(a[0])) throw new Error("taken"); rooms.set(a[0], { code: a[0], made: a[1], version: a[2], ip: a[3], host_key: a[4], join_key: null, host_name: a[5], join_name: null, host_addrs: a[6], join_addrs: null, queue: a[7], who: a[8], lobby: null, loc: a[9], join_region: null, rowid: ++rowids }); return {}; }
+        if (sql.startsWith("UPDATE rooms SET join_key = ?, join_name = ?, join_addrs = ?, join_region = ?")) { if (noLocColumn) throw new Error("D1_ERROR: no such column: join_region"); const r = rooms.get(a[4]); if (!r || r.join_key !== null) return { meta: { changes: 0 } }; r.join_key = a[0]; r.join_name = a[1]; r.join_addrs = a[2]; r.join_region = a[3]; return { meta: { changes: 1 } }; }
+        if (sql.startsWith("UPDATE rooms SET join_key = ? WHERE code = ? AND join_key IS NULL")) { const r = rooms.get(a[1]); if (!r || r.join_key !== null) return { meta: { changes: 0 } }; r.join_key = a[0]; return { meta: { changes: 1 } }; }
+        if (sql.startsWith("UPDATE rooms SET join_key = NULL WHERE code = ? AND join_key = ?")) { const r = rooms.get(a[0]); if (!r || r.join_key !== a[1]) return { meta: { changes: 0 } }; r.join_key = null; return { meta: { changes: 1 } }; }
+        if (sql.startsWith("INSERT INTO rooms")) { if (rooms.has(a[0])) throw new Error("taken"); if (sql.includes("lobby") && noLobbyColumn) throw new Error("D1_ERROR: table rooms has no column named lobby"); rooms.set(a[0], { code: a[0], made: a[1], version: a[2], ip: a[3], host_key: a[4], join_key: null, host_name: a[5], join_name: null, host_addrs: a[6], join_addrs: null, queue: a[7] ?? null, who: a[8] ?? null, ...(sql.includes("lobby") ? { lobby: 1 } : noLobbyColumn ? {} : { lobby: null }), ...(noLocColumn ? {} : { loc: null, join_region: null }), rowid: ++rowids }); return {}; }
         if (sql.startsWith("DELETE FROM rooms WHERE who")) { for (const [k, r] of rooms) { if (r.who === a[0] && r.queue !== null && r.join_key === null) rooms.delete(k); } return {}; }
         if (sql.startsWith("DELETE FROM rooms WHERE code = ? AND join_key IS NULL")) { const r = rooms.get(a[0]); if (r && r.join_key === null) { rooms.delete(a[0]); return { meta: { changes: 1 } }; } return { meta: { changes: 0 } }; }
         if (sql.startsWith("UPDATE rooms SET join_key")) { const r = rooms.get(a[3]); if (!r || r.join_key !== null) return { meta: { changes: 0 } }; r.join_key = a[0]; r.join_name = a[1]; r.join_addrs = a[2]; return { meta: { changes: 1 } }; }
@@ -43,8 +50,10 @@ const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; retur
         if (sql.startsWith("DELETE FROM rooms WHERE code")) { rooms.delete(a[0]); return {}; }
         throw new Error("run: " + sql); } }; } };
 const env = { DB }; // (no TURN key: no logins are asked of Cloudflare)
-async function post(what, ip, body) {
-    const r = await worker.fetch(new Request("https://x/v1/" + what, { method: "POST", headers: { "cf-connecting-ip": ip }, body: JSON.stringify(body) }), env);
+async function post(what, ip, body, cf) {
+    const req = new Request("https://x/v1/" + what, { method: "POST", headers: { "cf-connecting-ip": ip }, body: JSON.stringify(body) });
+    if (cf) { Object.defineProperty(req, "cf", { value: cf }); } // (where Cloudflare places the request)
+    const r = await worker.fetch(req, env);
     return r.json();
 }
 let fails = 0;
@@ -399,6 +408,208 @@ rooms.clear();
     const still = await post("host", "198.51.100.69", { v: 5, rel: 139, name: "O", addrs: ["198.51.100.69:7000"] });
     check("lobby: ... and still makes rooms for matches of two", still.code && still.key);
     noLobbyColumn = false;
+}
+// quick match, nearby first (a game that sends `waited`)
+{
+    const DXB = { latitude: "25.20", longitude: "55.27", continent: "AS", country: "AE", colo: "DXB" };   // Dubai
+    const RUH = { latitude: "24.71", longitude: "46.68", continent: "AS", country: "SA", colo: "RUH" };   // Riyadh, 870 km
+    const FRA = { latitude: "50.11", longitude: "8.68", continent: "EU", country: "DE", colo: "FRA" };    // Frankfurt, 4,800 km
+    const CDG = { latitude: "48.86", longitude: "2.35", continent: "EU", country: "FR", colo: "CDG" };   // Paris, 480 km from Frankfurt
+    const NOPOS = { continent: "EU", country: "FR" };                                                   // no position, a continent
+    let n = 0;
+    const me = (name, extra = {}) => ({ v: 7, rel: 139, name, addrs: ["198.18.50." + (++n) + ":7000"], queue: "S", who: "near" + name + "xxxxxxxx", ...extra });
+    const seen = [];
+    const ask = async (body, cf, ip) => { const r = await post("quick", ip ?? "198.18.60." + (++n), body, cf); seen.push(r); return r; };
+    const poll = async (room) => { const r = await post("poll", "198.18.61.1", { code: room.code, key: room.key }); seen.push(r); return r; };
+    rooms.clear();
+    let f = await ask(me("F", { waited: 0 }), FRA);
+    let r = await ask(me("R", { waited: 0 }), RUH);
+    check("near: a room of one's own says when the search widens", f.role === "host" && f.widen === 25 && r.role === "host" && rooms.get(f.code).loc === "50,9,EU,");
+    let d = await ask(me("D", { waited: 0 }), DXB);
+    check("near: the nearer room is taken first, not the one waiting longest", d.role === "join" && d.code === r.code && d.region === "ME" && rooms.get(f.code).join_key === null);
+    let p = await poll(r);
+    check("near: the host is told the other's continent with its poll", p.peer && p.peer.name === "D" && p.region === "ME");
+    // far: not before the widening
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    d = await ask(me("D", { waited: 0 }), DXB);
+    check("far: not taken at once (a room of one's own)", d.role === "host" && d.widen === 25 && rooms.get(f.code).join_key === null);
+    let again = await ask(me("D", { waited: 10, code: d.code, key: d.key }), DXB);
+    check("far: searching again from the room before the widening: still waiting, the same room", again.role === "host" && again.code === d.code && again.key === d.key && !again.joined && rooms.get(d.code).join_key === null);
+    again = await ask(me("D", { waited: 30, code: d.code, key: d.key }), DXB);
+    check("far: after the widening the far room is taken, and the searcher's own is gone", again.role === "join" && again.code === f.code && again.region === "EU" && !rooms.has(d.code));
+    p = await poll(f);
+    check("far: ... and its host learns the other player and the region", p.peer && p.peer.name === "D" && p.region === "ME");
+    // a room that has waited past the widening is taken by a newcomer from afar
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    rooms.get(f.code).made -= 26;
+    d = await ask(me("D", { waited: 0 }), DXB);
+    check("far: a room that has waited 26 seconds is taken at once by a far newcomer", d.role === "join" && d.code === f.code);
+    // the nearest of the far ones, once widened
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    const tokyo = await ask(me("T", { waited: 0 }), { latitude: "35.68", longitude: "139.69", continent: "AS" });
+    d = await ask(me("D", { waited: 40 }), DXB);
+    check("widened: the nearest of the far rooms (Frankfurt, not Tokyo)", d.role === "join" && d.code === f.code && rooms.get(tokyo.code).join_key === null);
+    // two far waiters meet by searching again
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    d = await ask(me("D", { waited: 0 }), DXB);
+    let f2 = await ask(me("F", { waited: 10, code: f.code, key: f.key }), FRA);
+    let d2 = await ask(me("D", { waited: 10, code: d.code, key: d.key }), DXB);
+    check("two far waiters: both wait on in their rooms at ten seconds", f2.role === "host" && d2.role === "host" && rooms.size === 2);
+    f2 = await ask(me("F", { waited: 30, code: f.code, key: f.key }), FRA);
+    check("two far waiters: at thirty seconds the one searching again joins the other", f2.role === "join" && f2.code === d.code && !rooms.has(f.code) && rooms.size === 1);
+    p = await poll(d);
+    check("two far waiters: ... and the other learns it by its poll", p.peer && p.peer.name === "F" && p.region === "EU");
+    // a search again from a room that someone has just joined: the match, not a new search
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    let c = await ask(me("C", { waited: 0 }), CDG);
+    check("near: Paris joins Frankfurt at once", c.role === "join" && c.code === f.code);
+    f2 = await ask(me("F", { waited: 10, code: f.code, key: f.key }), FRA);
+    check("searching again after being joined: told it is joined, the room and its join untouched", f2.role === "host" && f2.joined === true && f2.code === f.code && rooms.get(f.code).join_name === "C");
+    p = await poll(f);
+    check("... and its poll has the other player", p.peer && p.peer.name === "C" && p.region === "EU");
+    // a room held while its host searches again: nobody else joins it meanwhile, and it is let go after
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA);
+    rooms.get(f.code).join_key = HELD;
+    check("held: a room held is not given to a near searcher", (await ask(me("C", { waited: 0 }), CDG)).role === "host");
+    check("held: nor joined by its code", (await post("join", "198.18.62.1", { v: 7, code: f.code, name: "X", addrs: ["198.18.62.1:1"] })).error === "full");
+    check("held: its poll says nobody yet, the made-up key '-' gets nothing", (await post("poll", "198.18.61.1", { code: f.code, key: f.key })).peer === null && (await post("poll", "198.18.62.1", { code: f.code, key: HELD })).error === "no room");
+    rooms.get(f.code).join_key = null;
+    // a search again with a wrong key, or for a room that has run out
+    check("searching again with another's key: no room", (await ask(me("X", { waited: 10, code: f.code, key: "Y".repeat(24) }), FRA)).error === "no room");
+    rooms.get(f.code).made -= 700;
+    check("searching again from a room that has run out: no room (the game searches anew)", (await ask(me("F", { waited: 700, code: f.code, key: f.key }), FRA)).error === "no room");
+    // searching again is not counted against the searches an hour
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), FRA, "198.18.70.1");
+    let all = true;
+    for (let i = 0; i < 70; i++) { const a = await ask(me("F", { waited: 10, code: f.code, key: f.key }), FRA, "198.18.70.1"); all = all && a.role === "host" && a.code === f.code; }
+    check("70 searches again in an hour from one address: all answered", all);
+    // older games: as before
+    rooms.clear();
+    const oldA = await ask(me("OA"), FRA);
+    const newR = await ask(me("NR", { waited: 0 }), DXB);
+    check("old: an older game's room keeps no place; it is told nothing new", oldA.role === "host" && rooms.get(oldA.code).loc === null && oldA.widen === undefined);
+    check("new + old: a newer game does not take an older game's room at once (its place is not known)", newR.role === "host" && rooms.get(oldA.code).join_key === null);
+    const oldB = await ask(me("OB"), DXB);
+    check("old: an older searcher takes whoever waits longest (the older room in Europe, not the newer one next door), as before", oldB.role === "join" && oldB.code === oldA.code && oldB.region === undefined);
+    p = await post("poll", "198.18.61.1", { code: oldA.code, key: oldA.key });
+    check("old: the older host's poll is answered as before (no region)", p.peer && p.peer.name === "OB" && !("region" in p));
+    const oldC = await ask(me("OC"), FRA);
+    check("old + new: an older searcher takes a newer game's room at once, wherever", oldC.role === "join" && oldC.code === newR.code && oldC.region === undefined);
+    p = await poll(newR);
+    check("old + new: the newer host is told the older player's continent", p.peer && p.peer.name === "OC" && p.region === "EU");
+    rooms.clear();
+    const oldD = await ask(me("OD"), FRA);
+    d = await ask(me("D", { waited: 0 }), FRA);
+    d2 = await ask(me("D", { waited: 30, code: d.code, key: d.key }), FRA);
+    check("new + old: a newer searcher takes an older game's room after the widening", d.role === "host" && d2.role === "join" && d2.code === oldD.code && d2.region === undefined);
+    // a place without position: one continent counts as near
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), NOPOS);
+    c = await ask(me("C", { waited: 0 }), CDG);
+    check("no position: the same continent is taken at once", c.role === "join" && c.code === f.code && rooms.get(f.code).loc === ",,EU,");
+    rooms.clear();
+    f = await ask(me("F", { waited: 0 }), undefined);
+    c = await ask(me("C", { waited: 0 }), CDG);
+    check("no place at all: taken only after the widening", c.role === "host" && (await ask(me("C", { waited: 25, code: c.code, key: c.key }), CDG)).code === f.code);
+    // two near ones in the same moment: the later gives its room up and joins
+    rooms.clear();
+    {
+        const first = await ask(me("G", { waited: 0 }), FRA);
+        const kept = rooms.get(first.code); rooms.delete(first.code);
+        const realPrepare = DB.prepare;
+        let put = false;
+        DB.prepare = (sql) => { const st = realPrepare(sql); if (!put && sql.startsWith("INSERT INTO rooms")) { put = true; rooms.set(first.code, kept); } return st; };
+        const second = await ask(me("H", { waited: 0 }), CDG);
+        DB.prepare = realPrepare;
+        check("two near at once: the later one gives its room up and joins the earlier", second.role === "join" && second.code === first.code && rooms.size === 1);
+        rooms.clear();
+        const far = await ask(me("G", { waited: 0 }), FRA);
+        const keptFar = rooms.get(far.code); rooms.delete(far.code);
+        put = false;
+        DB.prepare = (sql) => { const st = realPrepare(sql); if (!put && sql.startsWith("INSERT INTO rooms")) { put = true; rooms.set(far.code, keptFar); } return st; };
+        const other = await ask(me("H", { waited: 0 }), DXB);
+        DB.prepare = realPrepare;
+        check("two far at once: both keep their rooms (they meet by searching again)", other.role === "host" && rooms.size === 2);
+    }
+    // what the player chose: a region, anywhere, or auto (the above)
+    rooms.clear();
+    const eu = await ask(me("P", { waited: 0, area: "EU" }), CDG);
+    check("region: a room of one's own says when to search again, and no widening", eu.role === "host" && eu.again === 10 && eu.widen === undefined && rooms.get(eu.code).loc === "49,2,EU,EU");
+    check("region: an Auto searcher outside the region never gets it, however long it has waited", (await ask(me("D", { waited: 300 }), DXB)).role === "host");
+    await ask(me("A", { waited: 0, area: "any" }), FRA);
+    check("region: nor one who chose Anywhere, in the region", rooms.get(eu.code).join_key === null);
+    check("region: nor an older game", (await ask(me("O"), FRA)).role === "host");
+    check("region: nor one in another region who chose that region", (await ask(me("M", { waited: 0, area: "EU" }), DXB)).role === "host");
+    let x = await ask(me("F", { waited: 0 }), FRA);
+    check("region: an Auto searcher placed in it gets it", x.role === "join" && x.code === eu.code && x.region === "EU");
+    rooms.clear();
+    const eu2 = await ask(me("P", { waited: 0, area: "EU" }), CDG);
+    x = await ask(me("F", { waited: 0, area: "EU" }), FRA);
+    check("region: one placed in it who chose the same region gets it", x.role === "join" && x.code === eu2.code);
+    rooms.clear();
+    const far = await ask(me("F", { waited: 0 }), FRA);
+    const hidden = rooms.get(far.code); rooms.delete(far.code); // (or the Anywhere one would take it)
+    const anyRoom = await ask(me("Y", { waited: 0, area: "any" }), FRA, "198.18.71.1");
+    rooms.set(far.code, hidden); hidden.rowid = 0;
+    x = await ask(me("M", { waited: 0, area: "EU" }), DXB);
+    check("region: a searcher from elsewhere who chose Europe takes an Auto room there at once, not an Anywhere one", x.role === "join" && x.code === far.code && rooms.get(anyRoom.code).join_key === null);
+    rooms.clear();
+    const any1 = await ask(me("Y", { waited: 0, area: "any" }), FRA);
+    x = await ask(me("M", { waited: 0, area: "ME" }), DXB);
+    check("region: a room placed elsewhere is never taken (a room of one's own instead)", x.role === "host" && rooms.get(any1.code).join_key === null);
+    const x2 = await ask(me("M", { waited: 100, code: x.code, key: x.key, area: "ME" }), DXB);
+    check("region: not after waiting either", x2.role === "host" && x2.code === x.code);
+    const r1 = await ask(me("R", { waited: 0 }), RUH);
+    check("region: an Auto searcher placed in it takes it (the nearer one: Riyadh to Dubai)", r1.role === "join" && r1.code === x.code && r1.region === "ME");
+    // anywhere
+    rooms.clear();
+    const auto1 = await ask(me("T", { waited: 0 }), { latitude: "35.68", longitude: "139.69", continent: "AS" });
+    const anyF = await ask(me("A", { waited: 0, area: "any" }), FRA);
+    check("anywhere: takes whoever waits longest at once, however far", anyF.role === "join" && anyF.code === auto1.code && anyF.region === "AS");
+    rooms.clear();
+    const old1 = await ask(me("O"), FRA);
+    const anyD = await ask(me("A", { waited: 0, area: "any" }), DXB);
+    check("anywhere: takes an older game's room at once", anyD.role === "join" && anyD.code === old1.code && anyD.region === undefined);
+    rooms.clear();
+    const anyH = await ask(me("A", { waited: 0, area: "any" }), FRA);
+    check("anywhere: a room of one's own: search again, no widening", anyH.role === "host" && anyH.again === 10 && anyH.widen === undefined);
+    x = await ask(me("D", { waited: 0 }), DXB);
+    check("auto + anywhere: a far Auto searcher does not take an Anywhere room before the widening", x.role === "host");
+    const anyH2 = await ask(me("A", { waited: 10, code: anyH.code, key: anyH.key, area: "any" }), FRA);
+    check("auto + anywhere: the Anywhere one takes it by searching again", anyH2.role === "join" && anyH2.code === x.code);
+    rooms.clear();
+    const anyO = await ask(me("A", { waited: 0, area: "any" }), FRA);
+    const oldS = await ask(me("O"), DXB);
+    check("old + anywhere: an older searcher takes an Anywhere room at once", oldS.role === "join" && oldS.code === anyO.code);
+    rooms.clear();
+    const regO = await ask(me("P", { waited: 0, area: "EU" }), CDG);
+    const autoO = await ask(me("F", { waited: 0 }), { latitude: "40.7", longitude: "-74", continent: "NA" });
+    const oldT = await ask(me("O"), FRA);
+    check("old + region: an older searcher passes a room of one region by and takes the next", oldT.role === "join" && oldT.code === autoO.code && rooms.get(regO.code).join_key === null);
+    check("an unknown area is taken as Auto", (await ask(me("Z", { waited: 0, area: "moon" }), CDG)).code === regO.code);
+    check("the Middle East: by country (Egypt), not by continent", (await ask(me("E", { waited: 0, area: "ME" }), { latitude: "30", longitude: "31", continent: "AF", country: "EG" })).loc === undefined && [...rooms.values()].some((r) => r.loc === "30,31,ME,ME"));
+    // nothing of a place goes to the other player but the continent
+    const text = JSON.stringify(seen, (k, v) => (k === "key" || k === "code" ? "*" : v)); // (random letters: FRA could be in one)
+    check("no position, country or colo in any answer", !/"loc"|latitude|longitude|"(DE|FR|SA|AE)"|FRA|CDG|DXB|RUH|50,9|25,55|25,47|"[A-Z][A-Z],/.test(text) && seen.some((x) => x.region));
+    // a database without the new columns: rooms still made and matched (by the widening: no place is kept)
+    rooms.clear();
+    noLocColumn = true;
+    f = await ask(me("F", { waited: 0 }), FRA);
+    c = await ask(me("C", { waited: 0 }), CDG);
+    const c2 = await ask(me("C", { waited: 30, code: c.code, key: c.key }), CDG);
+    check("no columns: rooms made without a place, matched after the widening", f.role === "host" && rooms.get(c2.code ?? "") !== undefined && c2.role === "join" && c2.code === f.code && rooms.get(f.code).join_name === "C");
+    p = await poll(f);
+    check("no columns: the host's poll as before", p.peer && p.peer.name === "C" && !("region" in p));
+    const o = await ask(me("OE"), FRA);
+    check("no columns: an older game as before", o.role === "host");
+    noLocColumn = false;
 }
 console.log(fails === 0 ? "all passed" : fails + " failed");
 process.exit(fails === 0 ? 0 : 1);

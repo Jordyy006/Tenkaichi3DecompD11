@@ -18,6 +18,8 @@ typedef struct MatchStatus {
     int relayGen;                   /* raised when this side has got a relay address after state 3 (permissions are due) */
     int lobby;                      /* the code is a lobby's (the service said so when joining): the lobby's member, not a player */
     char self[64];                  /* this game's public address as STUN saw it ("" not known) */
+    char region[4];                 /* a quick match: the other player's region as the service placed it ("EU"; "" not said) */
+    int widen;                      /* a quick match that waits, Auto: after this many seconds it looks everywhere (0: not said) */
 } MatchStatus;
 
 #define MATCH_QUEUES 5
@@ -32,6 +34,7 @@ int Match_SocketBusy(void); /* the search's thread is using the match's socket (
 void Match_RelayAsk(void);  /* a lobby's owner: a member cannot reach it directly, a relay address is wanted (once) */
 int Match_RelayGen(void);   /* raised each time this side has got a relay address (a lobby's owner: permissions are due) */
 void Match_Watch(int on);   /* a host lets spectators in: its room is kept while the match is on (see net_match.c) */
+void Match_Area(const char *area); /* a quick match: where to look ("auto", "any" or a region: "EU"), set before Match_Begin */
 int Match_Watchers(char out[][64], int max, int *gen); /* the spectators' addresses ("seen=" too); *gen: changes */
 void Match_QueuesAsk(int version);
 void Match_HelloAsk(void);

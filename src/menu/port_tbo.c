@@ -248,6 +248,9 @@ extern int Port_LobbyInBackground(void);
 extern int Port_RollCan(void);
 extern int Port_LobbyStartQuick(int queue);   /* a quick match: 0 one on one, 1 teams (the service's queues S, T) */
 extern void Port_LobbyQueuesAsk(void);        /* asks how many wait in each queue */
+extern void Port_LobbyQuickArea(const char *area); /* what the next quick match looks for: "auto", "any" or a region */
+extern int Port_LobbyWiden(void);             /* a quick match that waits (Auto): seconds after which it looks everywhere, 0 not said */
+extern const char *Port_LobbyRivalRegion(void); /* the rival's region's name, "" not known */
 extern int Port_LobbyQueueWaiting(int queue); /* ... as last heard, -1 if not known */
 extern void Port_NetSpeedSet(int percent);
 extern int Port_NetSpeedStandard(void);
@@ -341,6 +344,7 @@ typedef struct TboScreen {
     s32 waitBack;       /* the screen a cancelled search goes back to */
     /* Quick Match */
     s32 queue;          /* 0 one on one, 1 teams */
+    s32 region;         /* where to look: 0 Auto (the nearest first), 1..7 only that region, 8 Anywhere (QK_REGIONS) */
     s32 qkCur;
     s32 asked;          /* frames when the queues were last asked about */
     /* Train While Waiting */
@@ -407,6 +411,12 @@ static char *sTbHubSay[HUB_COUNT] = {
 };
 static void Tb_LobbyOpen(void);
 static void Tb_LobbyCreate(void);
+/* Quick Match's Region: what the player chooses, and what the matchmaking service is told (port/matchmaking/worker.js:
+   Auto takes the nearest first and everyone after a while; a region only players placed in it; Anywhere whoever
+   waits longest). */
+#define QK_REGIONS 9
+static char *sTbRegionName[QK_REGIONS] = {"AUTO", "NORTH AMERICA", "SOUTH AMERICA", "EUROPE", "MIDDLE EAST", "AFRICA", "ASIA", "OCEANIA", "ANYWHERE"};
+static char *sTbRegionArea[QK_REGIONS] = {"auto", "NA", "SA", "EU", "ME", "AF", "AS", "OC", "any"};
 static char *sTbTime[5] = {"60 SECONDS", "90 SECONDS", "180 SECONDS", "240 SECONDS", "NO LIMIT"};
 static char sTbKeys[KEY_ROWS][KEY_COLS + 1] = {"ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ0", "123456789"};
 
@@ -471,6 +481,10 @@ static void Tb_LoadChoices(void) {
     }
     sTb->roll &= ~1;
     sTb->queue = Port_Setting("tbo_queue", 0) == 1;
+    sTb->region = Port_Setting("tbo_region", 0);
+    if (sTb->region < 0 || sTb->region >= QK_REGIONS) {
+        sTb->region = 0;
+    }
     sTb->spMe = Port_Setting("tbo_spar_me", 0);
     sTb->spFoe = Port_Setting("tbo_spar_foe", 31);
     if (sTb->spMe < 0 || sTb->spMe >= TB_FIGHTERS) {
@@ -713,7 +727,9 @@ static void Tb_QuickStart(void) {
     Port_NetOptions(Port_RollCan() ? 8 : 0, -2);
     Port_NetNameSet(Port_NetNameGet());
     Port_SettingSave("tbo_queue", sTb->queue);
+    Port_SettingSave("tbo_region", sTb->region);
     Port_SettingsWrite();
+    Port_LobbyQuickArea(sTbRegionArea[sTb->region]);
     state = Port_LobbyStartQuick(sTb->queue);
     if (state < 0) {
         Tb_Note("THE NETWORK COULD NOT BE OPENED ON THIS PC");
@@ -730,7 +746,7 @@ static void Tb_QuickUpdate(s32 live) {
     Pad *pad = &gPad[0];
 
     Ps_Prompt(3, "Change");
-    Ps_Prompt(0, sTb->qkCur == 1 ? "Search" : "Next");
+    Ps_Prompt(0, sTb->qkCur == 2 ? "Search" : "Next");
     Ps_Prompt(2, "Back");
     if (sTb->frames - sTb->asked > 1800) { /* how many wait in each queue, asked again every half minute */
         sTb->asked = sTb->frames;
@@ -739,18 +755,21 @@ static void Tb_QuickUpdate(s32 live) {
     if (!live) {
         return;
     }
-    Ps_Move(&sTb->qkCur, 2);
+    Ps_Move(&sTb->qkCur, 3);
     if (sTb->qkCur == 0 && Ps_Side() != 0) {
         sTb->queue = !sTb->queue;
         Snd_PlaySe(1, 0);
+    } else if (sTb->qkCur == 1 && Ps_Side() != 0) {
+        sTb->region = (sTb->region + Ps_Side() + QK_REGIONS) % QK_REGIONS;
+        Snd_PlaySe(1, 0);
     }
     if (pad->gamePressed & (PADG_CROSS | PADG_START)) {
-        if (sTb->qkCur == 1 || (pad->gamePressed & PADG_START)) {
+        if (sTb->qkCur == 2 || (pad->gamePressed & PADG_START)) {
             Snd_PlaySe(1, 1);
             Tb_QuickStart();
         } else {
             Snd_PlaySe(1, 0);
-            sTb->qkCur = 1;
+            sTb->qkCur++;
         }
     } else if (pad->gamePressed & PADG_TRIANGLE) {
         Snd_PlaySe(1, 2);
@@ -772,7 +791,7 @@ static void Tb_HubUpdate(s32 live) {
         switch (sTb->hubCur) {
         case HUB_QUICK:
             Snd_PlaySe(1, 1);
-            sTb->qkCur = 1;
+            sTb->qkCur = 2;
             sTb->asked = sTb->frames - 100000;
             Tb_SetMode(TB_QUICK);
             break;
@@ -1371,8 +1390,18 @@ static void Tb_DrawWait(void) {
     Ps_Panel(TBO_KIT_WINDOW, 176.0f, 292.0f, 348.0f, 328.0f, 0x80); /* the search's clock (a window, not a bar to choose) */
 }
 
+/* A name in capitals, as these pages write theirs (the letters A to Z only: a translation's others stay). */
+static void Tb_Upper(char *out, const char *text, s32 size) {
+    s32 i;
+
+    for (i = 0; text[i] != 0 && i < size - 1; i++) {
+        out[i] = text[i] >= 'a' && text[i] <= 'z' ? (char)(text[i] - 'a' + 'A') : text[i];
+    }
+    out[i] = 0;
+}
+
 static void Tb_DrawWaitText(void) {
-    static char line[96];
+    static char line[96], region[64];
     s32 secs = (sTb->frames - sTb->waitFrom) / 60;
     const char *code = Port_LobbyCode();
 
@@ -1383,11 +1412,31 @@ static void Tb_DrawWaitText(void) {
         Ps_Align(1);
         Ps_Text(95.0f, 124.0f, sTb->queue ? "TEAMS" : "ONE ON ONE", 0.86f, 156.0f, 1);
         Ps_Align(0);
-        Ps_Text(22.0f, 172.0f, "THE SERVICE PAIRS YOU", 0.46f, 150.0f, 0);
-        Ps_Text(22.0f, 190.0f, "WITH THE NEXT RIVAL", 0.46f, 150.0f, 0);
+        s32 widen = Port_LobbyWiden(), y = 214;
+        const char *from = Port_LobbyRivalRegion();
+
+        if (sTb->found && from[0] != 0) { /* where the matchmaking service placed the rival */
+            Tb_Upper(region, from, sizeof(region));
+            Ps_Text(22.0f, 172.0f, "YOUR RIVAL IS FROM", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 190.0f, region, 0.46f, 150.0f, 5);
+        } else if (sTb->region > 0 && sTb->region < QK_REGIONS - 1) {
+            Ps_Text(22.0f, 172.0f, "ONLY PLAYERS IN", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 190.0f, sTbRegionName[sTb->region], 0.46f, 150.0f, 5);
+            Ps_Text(22.0f, 210.0f, "THE WAIT CAN BE LONGER", 0.4f, 150.0f, 3);
+            y = 230;
+        } else if (sTb->region == 0 && widen > 0 && secs >= widen) {
+            Ps_Text(22.0f, 172.0f, "NO ONE NEARBY:", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 190.0f, "SEARCHING EVERYWHERE", 0.46f, 150.0f, 0);
+        } else if (sTb->region == 0 && widen > 0) {
+            Ps_Text(22.0f, 172.0f, "LOOKING FOR A RIVAL", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 190.0f, "NEAR YOU FIRST", 0.46f, 150.0f, 0);
+        } else {
+            Ps_Text(22.0f, 172.0f, "THE SERVICE PAIRS YOU", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 190.0f, "WITH THE NEXT RIVAL", 0.46f, 150.0f, 0);
+        }
         if (n > 0) {
             sprintf(line, Tb_Fmt("%d IN THIS QUEUE"), (int)n);
-            Ps_Text(22.0f, 214.0f, line, 0.42f, 150.0f, 5);
+            Ps_Text(22.0f, (f32)y, line, 0.42f, 150.0f, 5);
         }
     } else if (sTb->host) {
         Ps_Text(22.0f, 94.0f, "ROOM CODE", 0.56f, 0.0f, 0);
@@ -1500,8 +1549,8 @@ static void Tb_DrawSparText(void) {
 
 static void Tb_DrawQuick(void) {
     Tb_Hosts(TBO_HOSTS_MIC_WAVE, 404.0f, 350.0f, 240.0f);
-    Tb_DrawRows(2, sTb->qkCur, 110.0f);
-    Ps_Panel(TBO_KIT_WINDOW, 14.0f, 196.0f, 300.0f, 330.0f, 0x80);
+    Tb_DrawRows(3, sTb->qkCur, 110.0f);
+    Ps_Panel(TBO_KIT_WINDOW, 14.0f, 230.0f, 300.0f, 330.0f, 0x80);
 }
 
 static void Tb_DrawQuickText(void) {
@@ -1513,23 +1562,29 @@ static void Tb_DrawQuickText(void) {
     Ps_Align(2);
     Ps_Text(266.0f, 117.0f, sTb->queue ? "TEAMS (UP TO 5)" : "ONE ON ONE", 0.54f, 140.0f, 3);
     Ps_Align(0);
-    Ps_Text(36.0f, 149.0f, "Search", 0.66f, 110.0f, sTb->qkCur == 1 ? 1 : 0);
-    Ps_Text(28.0f, 206.0f, "WAITING RIGHT NOW", 0.52f, 0.0f, 2);
+    Ps_Text(36.0f, 149.0f, "Region", 0.66f, 110.0f, sTb->qkCur == 1 ? 1 : 0);
+    Ps_Align(2);
+    Ps_Text(266.0f, 151.0f, sTbRegionName[sTb->region], 0.54f, 150.0f, 3);
+    Ps_Align(0);
+    Ps_Text(36.0f, 183.0f, "Search", 0.66f, 110.0f, sTb->qkCur == 2 ? 1 : 0);
+    Ps_Text(28.0f, 238.0f, "WAITING RIGHT NOW", 0.52f, 0.0f, 2);
     for (q = 0; q < 2; q++) {
         s32 n = Port_LobbyQueueWaiting(q);
 
-        Ps_Text(36.0f, 234.0f + 26.0f * (f32)q, q ? "Teams" : "One on One", 0.56f, 120.0f, q == sTb->queue ? 1 : 0);
+        Ps_Text(36.0f, 262.0f + 22.0f * (f32)q, q ? "Teams" : "One on One", 0.56f, 120.0f, q == sTb->queue ? 1 : 0);
         if (n < 0) {
             sprintf(line, "...");
         } else {
             sprintf(line, Tb_Fmt("%d WAITING"), (int)n);
         }
         Ps_Align(2);
-        Ps_Text(286.0f, 236.0f + 26.0f * (f32)q, line, 0.5f, 120.0f, n > 0 ? 5 : 3);
+        Ps_Text(286.0f, 264.0f + 22.0f * (f32)q, line, 0.5f, 120.0f, n > 0 ? 5 : 3);
         Ps_Align(0);
     }
-    sprintf(line, Tb_Fmt("NO TIME LIMIT - %d%% SPEED"), (int)Port_NetSpeedStandard());
-    Ps_Text(28.0f, 296.0f, line, 0.46f, 260.0f, 3);
+    /* (the queues count everyone; what the region choice means instead of the rules, which the hosts' line says) */
+    Ps_Text(28.0f, 308.0f, sTb->region == 0 ? "RIVALS NEAR YOU FIRST, THEN ANYWHERE" : sTb->region == QK_REGIONS - 1 ? "THE NEXT RIVAL, WHEREVER: THE FASTEST"
+                                                                                                    : "ONLY PLAYERS THERE: THE WAIT CAN BE LONGER",
+            0.42f, 264.0f, 3);
 }
 
 static void Tb_DrawProfile(void) {
@@ -2612,7 +2667,8 @@ static char *Tb_Help(void) {
     case TB_SPAR:
         return "Warm up at the tournament while we search! Pick yourself and a sparring partner.";
     case TB_QUICK:
-        return "Pick a battle and we'll find you a rival! No time limit, and the game runs a little faster.";
+        return sTb->qkCur == 1 ? "Auto: rivals near you first. A region: only players there. Anywhere: the fastest."
+                               : "Pick a battle and we'll find you a rival! No time limit, and the game runs a little faster.";
     case TB_NAME:
         return "Pick your letters, then Done! Square deletes, Start finishes.";
     case TB_PROFILE:
@@ -2732,6 +2788,10 @@ static void Tb_Speak(void) {
     case TB_WAIT:
         if (sTb->found) {
             Ps_Copy(focus, "Your rival is here! The match begins.", 160);
+            if (Port_LobbyRivalRegion()[0] != 0) {
+                Ps_Cat(focus, " Your rival is from ", 160);
+                Ps_Cat(focus, (char *)Port_LobbyRivalRegion(), 160);
+            }
         } else if (sTb->host == 2) {
             Ps_Copy(focus, sTb->queue ? "Quick match, teams: searching" : "Quick match, one on one: searching", 160);
         } else if (sTb->host) {
@@ -2751,6 +2811,9 @@ static void Tb_Speak(void) {
     case TB_QUICK:
         if (sTb->qkCur == 0) {
             Ps_Copy(focus, sTb->queue ? "Battle: teams" : "Battle: one on one", 160);
+        } else if (sTb->qkCur == 1) {
+            Ps_Copy(focus, "Region: ", 160);
+            Ps_Cat(focus, sTbRegionName[sTb->region], 160);
         } else {
             Ps_Copy(focus, "Search", 160);
         }

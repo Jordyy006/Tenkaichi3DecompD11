@@ -2390,13 +2390,61 @@ static void roll_tick(unsigned tick) {
     memcpy(sUsed[tick % RING], sIn[other][(tick < sHave[other] ? tick : sHave[other] - 1) % RING], PAD);
 }
 
+/* A quick match: the other player's region as the matchmaking service placed it ("EU"; "" not known), for the
+   lines that say the rival is there; kept from the moment the two are known to the end of their session. */
+static char sRivalRegion[4];
+
+/* A region's name in the chosen language (the port catalog's region/XX), "" for none. */
+const char *Port_LobbyRegionName(const char *code) {
+    static const char *const codes[] = {"NA", "SA", "EU", "ME", "AF", "AS", "OC"};
+    static const char *const names[] = {"North America", "South America", "Europe", "the Middle East", "Africa", "Asia", "Oceania"};
+    char id[16];
+    const char *t;
+    int i;
+
+    for (i = 0; i < 7 && (code == NULL || strcmp(code, codes[i]) != 0); i++) {
+    }
+    if (i == 7) {
+        return "";
+    }
+    snprintf(id, sizeof(id), "region/%s", codes[i]);
+    t = MenuTranslation_PortText(id);
+    return t != NULL && t[0] != '\0' ? t : names[i];
+}
+
+/* The rival's region's name ("" not known: not a quick match, or an older service or game). */
+const char *Port_LobbyRivalRegion(void) {
+    return Port_LobbyRegionName(sRivalRegion);
+}
+
+/* Puts `line` into `text` with {name}, {region} and {ms} replaced. */
+static void banner_fill(char *text, size_t size, const char *line, const char *name, const char *region, int ms) {
+    size_t i, k, n;
+    char num[16];
+
+    snprintf(num, sizeof(num), "%d", ms);
+    for (i = n = 0; line[i] != '\0' && n + 1 < size; i++) {
+        const char *put = strncmp(line + i, "{name}", 6) == 0 ? name : strncmp(line + i, "{region}", 8) == 0 ? region : strncmp(line + i, "{ms}", 4) == 0 ? num : NULL;
+        if (put != NULL) {
+            for (k = 0; put[k] != '\0' && n + 1 < size; k++) {
+                text[n++] = put[k];
+            }
+            i += put == name ? 5 : put == region ? 7 : 3;
+        } else {
+            text[n++] = line[i];
+        }
+    }
+    text[n] = '\0';
+}
+
 /* What the screen says while a session starts (the picture stands still meanwhile: Gs_HoldFrame keeps showing it
    with this line on it). Before the other player's name is known: that their game is being reached; then that they
    are there, by name. The lines are the port catalog's (net/connecting, net/rival_here; {name} is replaced). */
 static void session_banner(void) {
-    const char *other = sNames[!sMe], *line;
-    char text[256], name[NAME_LEN];
-    size_t i, k, n;
+    const char *other = sNames[!sMe], *line, *region = Port_LobbyRivalRegion();
+    char text[256], said[sizeof(sBannerSaid)], name[NAME_LEN];
+    size_t i, k;
+    int ms = sPingMs >= 0 ? sPingMs : sSetupRtt;
 
     if (!sSession) {
         return;
@@ -2407,30 +2455,36 @@ static void session_banner(void) {
         }
     }
     name[k] = '\0';
-    if (strcmp(sBannerSaid, k != 0 ? name : "\x01") == 0) {
+    /* (said again when the name comes, and once more when the round trip is first known: it then stays as it is) */
+    snprintf(said, sizeof(said), "%c%s", k == 0 ? '\x01' : ms < 0 ? '\x02' : '\x03', name);
+    if (strcmp(sBannerSaid, said) == 0 || (sBannerSaid[0] == '\x03' && k != 0)) {
         return;
     }
-    snprintf(sBannerSaid, sizeof(sBannerSaid), "%s", k != 0 ? name : "\x01");
+    snprintf(sBannerSaid, sizeof(sBannerSaid), "%s", said);
     if (k == 0) {
         line = MenuTranslation_PortText("net/connecting");
         Port_UiBanner(line != NULL ? line : "Connecting to your rival...", 0);
         return;
     }
-    line = MenuTranslation_PortText("net/rival_here");
-    if (line == NULL) {
-        line = "Your rival \"{name}\" is here! The match begins.";
-    }
-    for (i = n = 0; line[i] != '\0' && n + 1 < sizeof(text); i++) {
-        if (strncmp(line + i, "{name}", 6) == 0) {
-            for (k = 0; name[k] != '\0' && n + 1 < sizeof(text); k++) {
-                text[n++] = name[k];
-            }
-            i += 5;
-        } else {
-            text[n++] = line[i];
+    if (region[0] != '\0') { /* a quick match: where the rival is */
+        line = MenuTranslation_PortText("net/rival_from");
+        if (line == NULL) {
+            line = "Your rival \"{name}\" from {region} is here! The match begins.";
+        }
+    } else {
+        line = MenuTranslation_PortText("net/rival_here");
+        if (line == NULL) {
+            line = "Your rival \"{name}\" is here! The match begins.";
         }
     }
-    text[n] = '\0';
+    banner_fill(text, sizeof(text), line, name, region, ms);
+    if (ms >= 0) { /* the round trip, as measured once the two are connected */
+        char more[96];
+        line = MenuTranslation_PortText("net/round_trip");
+        banner_fill(more, sizeof(more), line != NULL ? line : "Round trip: ~{ms} ms", name, region, ms);
+        k = strlen(text);
+        snprintf(text + k, sizeof(text) - k, "\n%s", more);
+    }
     Port_UiBanner(text, 0);
 }
 
@@ -3021,6 +3075,7 @@ int Port_NetSessionsEnded(void) {
 
 void Port_NetSessionEnd(void) {
     sSessionsEnded++;
+    sRivalRegion[0] = '\0';
     if (Lobby_SessionEnded()) { /* a lobby's match: the lobby goes on, with its socket, its relay and its room code */
         sMode = 0;
         sSession = 0;
@@ -3125,6 +3180,7 @@ const char *Port_LobbyError(void) { return sCodeError; }
 int Port_LobbyStart(int host, const char *address, int port) {
     struct sockaddr_in local;
 
+    sRivalRegion[0] = '\0';
     if (Lobby_Active()) { /* (the lobby has the socket) */
         sLobby = -1;
         return sLobby;
@@ -3265,6 +3321,16 @@ int Port_LobbyStartQuick(int queue) {
     return sLobby;
 }
 
+/* What a quick match looks for: "auto" (the nearest first, everywhere after a while), "any", or a region ("EU"). */
+void Port_LobbyQuickArea(const char *area) { Match_Area(area); }
+
+/* A quick match that waits: whether the service now looks everywhere (Auto, past its widening): its seconds, 0 not said. */
+int Port_LobbyWiden(void) {
+    MatchStatus st;
+    Match_Poll(&st);
+    return st.widen;
+}
+
 void Port_LobbyQueuesAsk(void) { Match_QueuesAsk(NET_VERSION); }
 void Port_LobbyHelloAsk(void) { Match_HelloAsk(); }
 int Port_LobbyRelease(int *min, int *latest) { return Match_Release(min, latest); }
@@ -3392,6 +3458,7 @@ int Port_LobbyPoll(void) {
             sCodeMode = 0;
             sLobby = 5;
         } else if (st.state == 3) {
+            snprintf(sRivalRegion, sizeof(sRivalRegion), "%s", st.region);
             lobby_take_addrs(&st);
             sCodeGen = st.addrGen;
             sCodeRelayGen = st.relayGen;
@@ -3597,6 +3664,7 @@ void Port_LobbyAuto(void) {
             if (getenv("BT3_NET_ROLLBACK") == NULL && getenv("BT3_NET_DELAY") == NULL) {
                 Port_NetOptions(Port_RollCan() ? 8 : 0, -2); /* (and a quick match's fixed rollback and delay, as the window sets them) */
             }
+            Port_LobbyQuickArea(getenv("BT3_QUICK_AREA")); /* (testing: "auto", "any", or a region such as "EU") */
             Port_LobbyStartQuick(q);
         } else if (strncmp(what, "spectate:", 9) == 0) { /* BT3_LOBBY=spectate:<address>:<port> or spectate:CODE: watches that match */
             char addr[128];

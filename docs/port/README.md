@@ -3921,3 +3921,64 @@ from them is shown as that too. Tested offscreen with two copies by address (`BT
 (`BT3_SESSION_LEAVE`), a killed program (SIGTERM: the atexit goodbye), and a one-way failure (new test switch
 `BT3_NET_MUTE_AT=<blank>`: this game's packets stop reaching the other from that blank), and each against the 0.1.38.7
 and 0.1.38.8 releases.
+
+## Quick match: nearby players first, and a Region to choose (2026-10-26)
+
+Players complained about the round trip of quick matches: the service put a searcher with whoever had waited longest
+in the queue, wherever that was (a player in the Gulf got about 300 ms). Asked for by the user, and decided with him:
+the nearest first, then everyone; a Region item for those who want only one region; the rival's region and the
+measured round trip shown when the match is found.
+
+**Where players are.** The Worker reads Cloudflare's placing of each request (`request.cf`: latitude, longitude,
+continent, country) and keeps, for a quick-match room of a new game and only for the room's life (ten minutes at
+most), the position rounded to whole degrees (about 100 km), the region and the host's choice (column `loc`); of the
+one who joins, its region only (`join_region`). Nothing of it is logged, and the other player is told the region
+only ("from Europe"). Seven regions: Cloudflare's continents (North America, South America, Europe, Africa, Asia,
+Oceania), with the Middle East made of the countries AE, BH, CY, EG, IL, IQ, IR, JO, KW, LB, OM, PS, QA, SA, SY,
+TR, YE (Egypt, Turkey and Cyprus with it, as games' regions usually have them; Antarctica belongs to none).
+
+**The choice** (Quick Match's new Region row, left / right, kept as the setting `tbo_region`):
+
+| choice | is put with |
+|---|---|
+| Auto (the default) | a room within 2,500 km (great-circle, `NEAR_KM`) at once, the nearest first; once the searcher or the room has waited 25 seconds (`WIDEN_SECONDS`), any room, the nearest first (rooms of older games, whose place is not known, last). The search screen then says "NO ONE NEARBY: SEARCHING EVERYWHERE" |
+| a region | only players placed in that region (by Cloudflare, not by their own choice) who chose Auto or that region; never widened. The screens say the wait can be longer |
+| Anywhere | whoever waits longest, as before: the fastest (but not a room of one region it is not in) |
+
+2,500 km keeps the round trip near 60 ms or under (Frankfurt-Madrid 1,400 km, Dubai-Mumbai 1,900 km, New
+York-Chicago 1,150 km); 25 seconds is short enough that a search does not stall for long when nobody near is there.
+
+**Two who wait far apart still meet.** Before, a host never searched again: it only polled. A new game that waits in
+its room now asks `/v1/quick` again every ten seconds (`again` in the service's answer), naming its room (code and
+key) and how long it has searched (`waited`). The service holds the room while it looks (`join_key` set to "-" for
+that moment: nobody joins it meanwhile), then either puts it with another room (its own is deleted) or lets it go
+and says to wait on. A room someone joined just before is never lost: the answer is then `joined`, and the poll that
+follows has the other player. These searches from one's own room are not counted against the 60 searches an hour.
+A database without the two new columns still works (rooms are made without a place and matched by the widening).
+
+**Shown to the player.** The line of the match's start says `Your rival "Riyadh" from the Middle East is here! The
+match begins.` and, once the two are connected, `Round trip: ~2 ms` under it (the smaller of the host's setup pings
+and the round trip of the input packets; it stays a moment over the character select). New lines in the port
+catalog: `net/rival_from`, `net/round_trip`, `region/NA` ... `region/OC`; the screens' lines are port_tbo.c's (listed by
+tbo_strings.py; the table of what is sent, `sTbRegionArea`, is left out).
+
+**Older games** (0.1.38.8 and before) send no `waited`: they are answered exactly as before, whoever waits longest
+(but a room whose host chose one region is passed by), never search again and are told nothing new; their rooms are
+taken by new games as rooms whose place is not known (Auto: after the 25 seconds; Anywhere: at once; a region:
+never). Testing: `BT3_QUICK_AREA=auto|any|NA|SA|EU|ME|AF|AS|OC` with `BT3_LOBBY=quick:<queue>`.
+
+Tested (this machine, offscreen, a local stand-in of the Worker over SQLite with the schema, its places faked per
+player name):
+
+| case | result |
+|---|---|
+| `node port/matchmaking/test.mjs`: 56 new checks (near first, far only after the widening, the nearest of the far ones, two far waiters meeting by searching again, a search again after being joined, a room held while its host looks, regions / Anywhere / Auto and their mixes, older games with each, the Middle East by country, no place in any answer, a database without the columns) | all 180 pass |
+| Dubai + Riyadh (870 km), through the screens | matched at once; the line "Your rival "Riyadh" from the Middle East is here! ... Round trip: ~2 ms" |
+| Dubai + Frankfurt (4,800 km) | both wait; "NO ONE NEARBY: SEARCHING EVERYWHERE" at 0:25; matched by Dubai's search at 30 s |
+| Paris choosing Europe while Dubai and Riyadh search | left alone; its screen "ONLY PLAYERS IN EUROPE / THE WAIT CAN BE LONGER" |
+| 0.1.38.8 waiting, this build searching | taken by this build's search at 27 s (the room's wait past 25 s) |
+| this build waiting, 0.1.38.8 searching | joined at once |
+
+Both matches of the last two reached the character select together. The Windows build compiles (mingw-w64).
+Not checked: the Worker on Cloudflare with its real `request.cf` and D1 (the SQL ran on SQLite here), two players on
+two networks.
