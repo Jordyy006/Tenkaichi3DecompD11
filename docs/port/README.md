@@ -3942,8 +3942,14 @@ TR, YE (Egypt, Turkey and Cyprus with it, as games' regions usually have them; A
 | choice | is put with |
 |---|---|
 | Auto (the default) | a room within 2,500 km (great-circle, `NEAR_KM`) at once, the nearest first; once the searcher or the room has waited 25 seconds (`WIDEN_SECONDS`), any room, the nearest first (rooms of older games, whose place is not known, last). The search screen then says "NO ONE NEARBY: SEARCHING EVERYWHERE" |
-| a region | only players placed in that region (by Cloudflare, not by their own choice) who chose Auto or that region; never widened. The screens say the wait can be longer |
-| Anywhere | whoever waits longest, as before: the fastest (but not a room of one region it is not in) |
+| a region | players placed in that region (by Cloudflare, not by their own choice) at once, the nearest first; anyone once 40 seconds (`REGION_WIDEN_SECONDS`) have gone by. The screens say "Players there first, everyone after 40 s", and after 40 s "NO ONE THERE: SEARCHING EVERYWHERE" |
+| Anywhere | anyone: whoever waits longest, as before |
+
+(Changed the same day, the user's decision: a region was at first a lock, never widened; it is now a preference.)
+A pair is made only when each side takes the other, the wait being the longer of the two sides' (a room's: its
+age): Auto takes near players at once and anyone from 25 s; a region players placed there at once and anyone from
+40 s; Anywhere and older games anyone. So Auto in the Middle East and a player who chose South America meet at 40 s,
+not at 25 (Auto would take them, South America would not yet).
 
 2,500 km keeps the round trip near 60 ms or under (Frankfurt-Madrid 1,400 km, Dubai-Mumbai 1,900 km, New
 York-Chicago 1,150 km); 25 seconds is short enough that a search does not stall for long when nobody near is there.
@@ -3963,9 +3969,9 @@ catalog: `net/rival_from`, `net/round_trip`, `region/NA` ... `region/OC`; the sc
 tbo_strings.py; the table of what is sent, `sTbRegionArea`, is left out).
 
 **Older games** (0.1.38.8 and before) send no `waited`: they are answered exactly as before, whoever waits longest
-(but a room whose host chose one region is passed by), never search again and are told nothing new; their rooms are
-taken by new games as rooms whose place is not known (Auto: after the 25 seconds; Anywhere: at once; a region:
-never). Testing: `BT3_QUICK_AREA=auto|any|NA|SA|EU|ME|AF|AS|OC` with `BT3_LOBBY=quick:<queue>`.
+(of the rooms that take them: a new Auto room far away after 25 s, a region's room outside it after 40 s), never
+search again and are told nothing new; their rooms are taken by new games as rooms whose place is not known (Auto:
+after 25 s; a region: after 40 s; Anywhere: at once). Testing: `BT3_QUICK_AREA=auto|any|NA|SA|EU|ME|AF|AS|OC` with `BT3_LOBBY=quick:<queue>`.
 
 Tested (this machine, offscreen, a local stand-in of the Worker over SQLite with the schema, its places faked per
 player name):
@@ -3982,3 +3988,10 @@ player name):
 Both matches of the last two reached the character select together. The Windows build compiles (mingw-w64).
 Not checked: the Worker on Cloudflare with its real `request.cf` and D1 (the SQL ran on SQLite here), two players on
 two networks.
+
+**The region as a preference** (the same day): `node port/matchmaking/test.mjs` passes, 185 checks (the region's,
+Anywhere's and the older games' rewritten for the new rule; new: 30 / 40 s for a region against Auto both ways, a
+region chosen from elsewhere taking an Auto room there at 25 s, two different regions at 40 s). Through the screens
+with the local Worker: Dubai on Auto and São Paulo choosing South America both waited, São Paulo's screen saying
+"PLAYERS IN SOUTH AMERICA FIRST, EVERYONE AFTER 40 S", and were put together by Dubai's search at 40 s; both reached
+the character select. No change to the database.

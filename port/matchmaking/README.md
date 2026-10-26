@@ -115,16 +115,25 @@ match yet." when a search is started.
 A game that sends `waited` (how many seconds it has searched) and `area` ("auto", "any", or a region) is matched by
 where Cloudflare places the requests (`request.cf`), as the player chose:
 
-- **auto**: the nearest waiting room within `NEAR_KM` (2,500 km, great-circle) at once; once the searcher or the room
-  has waited `WIDEN_SECONDS` (25), any room, the nearest first (rooms of older games, whose place is unknown, last);
-- **a region** (`NA`, `SA`, `EU`, `ME`, `AF`, `AS`, `OC`): only rooms placed in that region whose host chose auto or
-  the same region, never widened; its own room is taken only by players placed there who chose auto or that region;
-- **any**: whoever waits longest (of the rooms it may have), as before.
+- **auto**: takes players within `NEAR_KM` (2,500 km, great-circle) at once, anyone once `WIDEN_SECONDS` (25) have
+  gone by, the nearest first (rooms of older games, whose place is unknown, last);
+- **a region** (`NA`, `SA`, `EU`, `ME`, `AF`, `AS`, `OC`): takes players placed in that region at once, anyone once
+  `REGION_WIDEN_SECONDS` (40) have gone by, the nearest first;
+- **any** (and an older game): takes anyone, whoever waits longest.
+
+A pair is made only when each side takes the other, the wait being the longer of the two (a room's: its age). So:
+
+| waited | Auto | a region chosen |
+|---|---|---|
+| 0-25 s | players nearby | players placed in that region |
+| 25-40 s | everyone but those who chose another region | still that region only |
+| from 40 s | everyone | everyone |
 
 The regions are Cloudflare's continents, except the Middle East: the countries AE, BH, CY, EG, IL, IQ, IR, JO, KW,
 LB, OM, PS, QA, SA, SY, TR, YE (`MIDDLE_EAST` in worker.js).
 
-When nobody suits, it gets a room of its own; the answer says `again` (10) and, for auto, `widen` (25). The game
+When nobody suits, it gets a room of its own; the answer says `again` (10) and, for auto and a region, `widen` (25, 40: when it takes
+anyone). The game
 then searches again every `again` seconds from its room: `/v1/quick` with its room's `code` and `key` (not counted
 against the 60 searches an hour). The room is held meanwhile (`join_key` "-"), so nobody joins it in that moment;
 the answer is a join (its own room deleted), "still waiting" (the same code), `joined: true` (someone had joined it:
@@ -135,9 +144,10 @@ join's answer and with the host's poll; nothing else of the other's place.
 host's position rounded to whole degrees (about 100 km), its region and its choice; the joiner's region. Never
 logged; no country, city, colo or exact position is stored or sent to anyone.
 
-**Older games** (no `waited`) are answered as before: the longest waiting (passing a room whose host chose a region
-they may not be in), no new fields in any answer. Their rooms have no place and are taken by newer games as unknown:
-auto after the widening, any at once, a region never.
+**Older games** (no `waited`) search as `any` does (the longest waiting of the rooms that take them: a newer Auto
+room far from them only after 25 s, a region's room outside it only after 40 s), and get no new fields in any
+answer. Their rooms have no place and are taken by newer games as unknown: auto after 25 s, a region after 40 s, any
+at once.
 
 **Updating a Worker that is already set up** (in this order):
 

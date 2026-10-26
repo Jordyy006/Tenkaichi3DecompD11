@@ -413,9 +413,10 @@ static char *sTbHubSay[HUB_COUNT] = {
 static void Tb_LobbyOpen(void);
 static void Tb_LobbyCreate(void);
 /* Quick Match's Region: what the player chooses, and what the matchmaking service is told (port/matchmaking/worker.js:
-   Auto takes the nearest first and everyone after a while; a region only players placed in it; Anywhere whoever
-   waits longest). */
+   Auto takes the nearest first and everyone after 25 seconds; a region players placed in it first and everyone
+   after 40; Anywhere whoever waits longest). */
 #define QK_REGIONS 9
+#define QK_REGION_WIDEN 40 /* a region's search takes everyone after this many seconds (the service's REGION_WIDEN_SECONDS) */
 static char *sTbRegionName[QK_REGIONS] = {"AUTO", "NORTH AMERICA", "SOUTH AMERICA", "EUROPE", "MIDDLE EAST", "AFRICA", "ASIA", "OCEANIA", "ANYWHERE"};
 static char *sTbRegionArea[QK_REGIONS] = {"auto", "NA", "SA", "EU", "ME", "AF", "AS", "OC", "any"};
 static char *sTbTime[5] = {"60 SECONDS", "90 SECONDS", "180 SECONDS", "240 SECONDS", "NO LIMIT"};
@@ -1429,10 +1430,14 @@ static void Tb_DrawWaitText(void) {
             Tb_Upper(region, from, sizeof(region));
             Ps_Text(22.0f, 172.0f, "YOUR RIVAL IS FROM", 0.46f, 150.0f, 0);
             Ps_Text(22.0f, 190.0f, region, 0.46f, 150.0f, 5);
+        } else if (sTb->region > 0 && sTb->region < QK_REGIONS - 1 && widen > 0 && secs >= widen) {
+            Ps_Text(22.0f, 172.0f, "NO ONE THERE:", 0.46f, 150.0f, 0); /* (a region's search takes everyone now) */
+            Ps_Text(22.0f, 190.0f, "SEARCHING EVERYWHERE", 0.46f, 150.0f, 0);
         } else if (sTb->region > 0 && sTb->region < QK_REGIONS - 1) {
-            Ps_Text(22.0f, 172.0f, "ONLY PLAYERS IN", 0.46f, 150.0f, 0);
+            Ps_Text(22.0f, 172.0f, "PLAYERS IN", 0.46f, 150.0f, 0);
             Ps_Text(22.0f, 190.0f, sTbRegionName[sTb->region], 0.46f, 150.0f, 5);
-            Ps_Text(22.0f, 210.0f, "THE WAIT CAN BE LONGER", 0.4f, 150.0f, 3);
+            sprintf(line, Tb_Fmt("FIRST, EVERYONE AFTER %d S"), (int)(widen > 0 ? widen : QK_REGION_WIDEN));
+            Ps_Text(22.0f, 210.0f, line, 0.4f, 150.0f, 3);
             y = 230;
         } else if (sTb->region == 0 && widen > 0 && secs >= widen) {
             Ps_Text(22.0f, 172.0f, "NO ONE NEARBY:", 0.46f, 150.0f, 0);
@@ -1564,7 +1569,7 @@ static void Tb_DrawQuick(void) {
 }
 
 static void Tb_DrawQuickText(void) {
-    static char line[64];
+    static char line[128];
     s32 q;
 
     Ps_Text(26.0f, 76.0f, "PICK YOUR BATTLE", 0.62f, 0.0f, 2);
@@ -1592,8 +1597,8 @@ static void Tb_DrawQuickText(void) {
         Ps_Align(0);
     }
     /* (the queues count everyone; what the region choice means instead of the rules, which the hosts' line says) */
-    Ps_Text(28.0f, 308.0f, sTb->region == 0 ? "RIVALS NEAR YOU FIRST, THEN ANYWHERE" : sTb->region == QK_REGIONS - 1 ? "THE NEXT RIVAL, WHEREVER: THE FASTEST"
-                                                                                                    : "ONLY PLAYERS THERE: THE WAIT CAN BE LONGER",
+    sprintf(line, Tb_Fmt("PLAYERS THERE FIRST, EVERYONE AFTER %d S"), (int)QK_REGION_WIDEN);
+    Ps_Text(28.0f, 308.0f, sTb->region == 0 ? "RIVALS NEAR YOU FIRST, THEN ANYWHERE" : sTb->region == QK_REGIONS - 1 ? "THE NEXT RIVAL, WHEREVER: THE FASTEST" : line,
             0.42f, 264.0f, 3);
 }
 
@@ -2677,7 +2682,7 @@ static char *Tb_Help(void) {
     case TB_SPAR:
         return "Warm up at the tournament while we search! Pick yourself and a sparring partner.";
     case TB_QUICK:
-        return sTb->qkCur == 1 ? "Auto: rivals near you first. A region: only players there. Anywhere: the fastest."
+        return sTb->qkCur == 1 ? "Auto: rivals near you first. A region: players there first, everyone after 40 s. Anywhere: the fastest."
                                : "Pick a battle and we'll find you a rival! No time limit, and the game runs a little faster.";
     case TB_NAME:
         return "Pick your letters, then Done! Square deletes, Start finishes.";
