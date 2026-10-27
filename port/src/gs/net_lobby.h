@@ -19,6 +19,8 @@ void NetIo_Close(void);                   /* the lobby's socket, closed (and its
 void NetIo_Send(const void *buf, int n, const struct sockaddr_in *to);
 int NetIo_Recv(uint8_t *pkt, int size, struct sockaddr_in *from); /* (through the relay if one is held) */
 int NetIo_Fingerprint(unsigned long long *fp);
+int NetIo_FingerprintKnown(void);         /* 1 known; else being computed (started if it was not): a lobby waits for it */
+int NetIo_FingerprintRequired(void);      /* a member who sends none is refused (net.c: FP_PEER_REQUIRED) */
 const char *NetIo_MyName(void);
 void NetIo_WatchService(void);            /* knocks at the addresses the matchmaking service has told of (room codes) */
 uint32_t NetIo_Rules(int type, int dp, int time, int speed); /* the rules word a host sends (net.c: sRules) */

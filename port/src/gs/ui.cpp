@@ -85,6 +85,8 @@ const char *Port_LobbyCode(void);                            // the host's room 
 const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
 int Port_LobbyRelayed(void);                                 // the other player was reached through the relay
 int Port_LobbyPoll(void);
+int Port_LobbyCheckingData(void);                           // a start waits for this game's gameplay fingerprint
+const char *Port_LobbyQuickRefusal(void);                   // why no quick match: NULL none, "" data being checked
 void Port_LobbyCancel(void);
 void Port_LobbyLaunch(void);
 int Port_LobbySpectate(const char *address, int port);        // gs/net.c: watch the match hosted there (a spectator)
@@ -743,8 +745,9 @@ static void quick_status(int state, int &lastState, const char *name) {
         state = 0;
     }
     if (state == 3 || state == 1) {
-        ImGui::TextUnformatted(state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
-        if (state == 3 && since != 0) {
+        ImGui::TextUnformatted(Port_LobbyCheckingData() ? "Checking your game data... The search begins when it is done."
+                               : state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
+        if (state == 3 && since != 0 && !Port_LobbyCheckingData()) {
             Uint64 left = kSearchMs - (SDL_GetTicks() - since);
             ImGui::TextDisabled("Searching for %d:%02d more. Leave the window open.", (int)(left / 60000), (int)(left / 1000 % 60));
         }
@@ -763,7 +766,20 @@ static void quick_status(int state, int &lastState, const char *name) {
     } else if (lastState == -5) {
         ImGui::TextWrapped("Nobody was searching this queue in the last three minutes. Search again, or try another queue.");
     }
-    if (ImGui::Button(lastState == -5 ? "Search again" : "Search for a match", ImVec2(U(200.0f), 0.0f))) {
+    // Quick match is with strangers: the original disc's data only (gs/net.c refuses the search otherwise; said here
+    // before it is asked for). With friends, by code or address, the same data on both sides is enough.
+    const char *refused = Port_LobbyQuickRefusal();
+    if (refused != NULL && refused[0] != '\0' && lastState != -3) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", refused);
+        ImGui::PopStyleColor();
+    } else if (refused != NULL) {
+        ImGui::TextDisabled("Checking your game data...");
+    }
+    ImGui::BeginDisabled(refused != NULL && refused[0] != '\0');
+    bool search = ImGui::Button(lastState == -5 ? "Search again" : "Search for a match", ImVec2(U(200.0f), 0.0f));
+    ImGui::EndDisabled();
+    if (search) {
         since = SDL_GetTicks() + 1;
         // The same for everyone in a quick match, whoever turns out to be the host: rollback of up to 8 frames and
         // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
@@ -827,7 +843,14 @@ static void build_net(void) {
         }
         ImGui::Spacing();
         if (ImGui::BeginTabBar("net")) {
-            if (ImGui::BeginTabItem("Host")) {
+            // BT3_UI_NET_TAB=host|quick|join (testing, with BT3_UI_OPEN=9): the online screen opens on that tab
+            static const char *firstTab = getenv("BT3_UI_NET_TAB");
+            static int firstFrames = 10; // (not on the tab bar's first frame alone: it has no tabs yet then)
+            auto tabFlags = [](const char *which) {
+                ImGuiTabItemFlags f = firstTab != NULL && strcmp(firstTab, which) == 0 ? ImGuiTabItemFlags_SetSelected : 0;
+                return f;
+            };
+            if (ImGui::BeginTabItem("Host", NULL, tabFlags("host"))) {
                 static const char *const kRoll[] = {"Off (wait for each other)", "Up to 2 frames", "Up to 4 frames", "Up to 6 frames", "Up to 8 frames"};
                 tab = 0;
                 ImGui::Checkbox("Use a room code (no port forwarding needed)", &useCode);
@@ -902,10 +925,10 @@ static void build_net(void) {
                     ImGui::SetItemTooltip("Up to 6 spectators can watch, with your address or room code (Join tab, \"Watch the\n"
                                           "match\"). They cost your match nothing: it never waits for them.");
                 }
-                ImGui::TextDisabled("The host's choices apply to both players.");
+                ImGui::TextDisabled("The host's choices apply to both players. Both need the same game data (mods too).");
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Quick match")) {
+            if (ImGui::BeginTabItem("Quick match", NULL, tabFlags("quick"))) {
                 static const char *const kQueue[] = {"Single battle", "Team battle", "DP battle (10 DP)", "DP battle (15 DP)", "DP battle (20 DP)"};
                 static Uint64 asked;
                 bool busy = sNetBusy; // (a search is under way: the queue is not changed under it)
@@ -931,7 +954,8 @@ static void build_net(void) {
                         Port_LobbyQueuesAsk();
                     }
                 }
-                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at %d%% speed.", Port_NetSpeedStandard());
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at %d%% speed, "
+                                   "between games with the original disc's data.", Port_NetSpeedStandard());
                 ImGui::BeginDisabled(busy);
                 for (int i = 0; i < 5; i++) {
                     char label[80];
@@ -948,7 +972,7 @@ static void build_net(void) {
                 ImGui::TextDisabled("games: a player who inspects their own network traffic can see the other's address.");
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Join")) {
+            if (ImGui::BeginTabItem("Join", NULL, tabFlags("join"))) {
                 tab = 1;
                 ImGui::SetNextItemWidth(U(120.0f));
                 ImGui::InputText("Room code", roomCode, sizeof(roomCode), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
@@ -974,6 +998,9 @@ static void build_net(void) {
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
+            if (firstTab != NULL && --firstFrames <= 0) {
+                firstTab = NULL;
+            }
         }
         ImGui::Spacing();
         {
@@ -1018,6 +1045,8 @@ static void build_net(void) {
                         }
                     }
                     ImGui::TextUnformatted(state == 3 ? "Tell the other player this code. Waiting for them to join..." : "The other player has joined. Connecting...");
+                } else if (Port_LobbyCheckingData()) {
+                    ImGui::TextUnformatted("Checking your game data... Connecting begins when it is done.");
                 } else {
                     ImGui::TextUnformatted(watching && Port_LobbySpectateWaiting() ? "The room's match has not begun yet. Waiting for it..."
                                            : state == 1 ? (watching ? "Found the room. Asking the host to let you watch..." : "Found the room. Connecting to the host...")

@@ -653,7 +653,9 @@ static void owner_hello(const uint8_t *pkt, int n, const struct sockaddr_in *fro
     if (get(pkt, 2) != LOBBY_VERSION || get(pkt, 3) != (uint32_t)NetIo_Version()) {
         why = LNO_VERSION;
     } else if (get(pkt, 4) == FP_MARK && NetIo_Fingerprint(&mine) && ((unsigned long long)get(pkt, 5) | (unsigned long long)get(pkt, 6) << 32) != mine) {
-        why = LNO_DATA;
+        why = LNO_DATA; /* (the same data as the owner's, modified or not: a lobby is among friends) */
+    } else if (get(pkt, 4) != FP_MARK && NetIo_FingerprintRequired()) {
+        why = LNO_DATA; /* (says none: 0.1.37, net.c FP_PEER_REQUIRED) */
     }
     for (k = 1; k < LOBBY_SLOTS; k++) {
         if (sL.m[k].on && same(&sL.m[k].addr, from)) {
@@ -1691,6 +1693,22 @@ static void queue_run(void) {
     Cmd c[16];
     int n, i;
     SDL_LockSpinlock(&sLock);
+    for (i = 0; i < sQueueN; i++) {
+        if (sQueue[i].kind == CMD_CREATE || sQueue[i].kind == CMD_JOIN_ADDR || sQueue[i].kind == CMD_JOIN_FOUND) {
+            break;
+        }
+    }
+    if (i < sQueueN && !NetIo_FingerprintKnown()) {
+        /* a lobby is made or joined once this game's gameplay fingerprint is known (it goes with the greeting, and
+           the owner compares the members' with its own): the commands wait in the queue meanwhile */
+        static int said;
+        SDL_UnlockSpinlock(&sLock);
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "bt3: lobby: this game's gameplay data are still being checked: the lobby begins when its fingerprint is known\n");
+        }
+        return;
+    }
     n = sQueueN;
     memcpy(c, sQueue, sizeof(c[0]) * (size_t)n);
     sQueueN = 0;

@@ -261,6 +261,7 @@ extern void BattleSetup_SetSide(s32 sideNo, s32 control, s32 pad, s32 memberCoun
 extern void BattleSetup_SetMember(s32 sideNo, s32 idx, s32 chara, s32 costume, s32 variant, s32 cpuLevel, f32 health, void *items);
 extern void BattleSetup_Finish(void);
 extern int Port_DataFingerprint(unsigned long long *out); /* plat_fprint.c: 1 known, 0 being worked out, -1 not done */
+extern int Port_DataFingerprintNeed(void);               /* the same, and started if this run had not */
 extern int Port_DataFingerprintOriginal(void);           /* 1 the data the game computes with is the original disc's */
 extern const char *Port_DataFingerprintText(void);
 extern int Port_Setting(const char *name, int def);
@@ -277,7 +278,7 @@ extern void Port_SettingsWrite(void);
 #define TB_NAME 5
 #define TB_QUICK 6
 #define TB_SPAR 7 /* Train While Waiting: the fighters of the sparring fight */
-#define TB_BLOCK 8 /* "Cannot Go Online": this game's data is not the disc's */
+#define TB_BLOCK 8 /* "No Quick Match": this game's data is not the disc's (quick match only) */
 #define TB_LOBBY 9 /* a lobby of up to eight (port/src/gs/net_lobby.c): its places, its rules, its talk */
 #define TB_FIGHTERS 161
 #define TB_TOURNAMENT_STAGE 4 /* the World Tournament Stage, at noon */
@@ -352,7 +353,7 @@ typedef struct TboScreen {
     s32 spMe;           /* your fighter */
     s32 spFoe;          /* your sparring partner */
     s32 spCur;
-    s32 blockBack;      /* the screen "Cannot Go Online" goes back to */
+    s32 blockBack;      /* the screen "No Quick Match" goes back to */
     s32 typing;         /* the PC keyboard types (circle on a keypad); else its keys are the pad's, as everywhere */
     s32 lower;          /* the name pad shows small letters */
     /* typing the name */
@@ -516,18 +517,21 @@ static void Tb_RollText(char *out, s32 roll) {
 }
 
 /* ---------------------------------------------------------------------------------------------- the rule */
-/* Online matches are only between two unmodded games. Fighter mods are switched off by themselves while a session
-   runs (plat_mods.c); what is checked here is the rest of the data the game computes with, against the original
-   disc (the gameplay fingerprint, plat_fprint.c: files added under gamedata/mods count). Returns 1 when a search may
-   start; else the note or the "Cannot Go Online" window says why. */
-static s32 Tb_Vanilla(void) {
-    s32 state = Port_DataFingerprint(NULL);
+/* Whose data may meet online (gs/net.c, which enforces it for every way in; docs/port/README.md, "Online: whose data
+   may meet"): a quick match is with strangers and needs the original disc's data; with friends (Create Room, Join
+   Room, a lobby) both games need the same data, modified or not, which the two compare when they connect. Fighter
+   mods are switched off by themselves while a session runs (plat_mods.c); what is checked is the rest of the data the
+   game computes with (the gameplay fingerprint, plat_fprint.c: files added under gamedata/mods count). No game goes
+   online before its own fingerprint is known. Returns 1 when the search may start; else the note or the "No Quick
+   Match" window says why. */
+static s32 Tb_Vanilla(s32 quick) {
+    s32 state = Port_DataFingerprintNeed();
 
-    if (state == 0) {
+    if (state != 1) {
         Tb_Note("CHECKING YOUR GAME DATA AGAINST THE DISC... TRY AGAIN IN A MOMENT");
         return 0;
     }
-    if (state == 1 && Port_DataFingerprintOriginal() == 1) {
+    if (!quick || Port_DataFingerprintOriginal() == 1) {
         return 1;
     }
     sTb->blockBack = sTb->mode;
@@ -550,7 +554,7 @@ static void Tb_BlockUpdate(s32 live) {
 static void Tb_BeginSearch(s32 host) {
     s32 state;
 
-    if (!Tb_Vanilla()) {
+    if (!Tb_Vanilla(0)) {
         return;
     }
     if (host) {
@@ -730,7 +734,7 @@ static void Tb_SparUpdate(s32 live) {
 static void Tb_QuickStart(void) {
     s32 state;
 
-    if (!Tb_Vanilla()) {
+    if (!Tb_Vanilla(1)) {
         return;
     }
     Port_NetSpeedSet(Port_NetSpeedStandard());
@@ -1497,9 +1501,9 @@ static void Tb_DrawBlockText(void) {
     const char *m = t;
     s32 n;
 
-    Ps_Heading(80.0f, 108.0f, "Cannot Go Online", 0.9f, 250.0f, 0x80);
-    Ps_Msg(80.0f, 146.0f, "Online matches are only between", 1.0f, 0x80);
-    Ps_Msg(80.0f, 166.0f, "two unmodded games.", 1.0f, 0x80);
+    Ps_Heading(80.0f, 108.0f, "No Quick Match", 0.9f, 250.0f, 0x80);
+    Ps_Msg(80.0f, 146.0f, "Quick match needs the original disc's data.", 1.0f, 0x80);
+    Ps_Msg(80.0f, 166.0f, "With friends, both need the same data.", 1.0f, 0x80);
     while (*m != 0 && strncmp(m, "modified:", 9) != 0) {
         m++;
     }
@@ -1798,7 +1802,7 @@ static void Tb_LobbyOpen(void) {
 
 /* The hub's Lobby: a new lobby, owned by this game, with a room code; the rules to begin with are Create Room's. */
 static void Tb_LobbyCreate(void) {
-    if (!Tb_Vanilla()) {
+    if (!Tb_Vanilla(0)) {
         return;
     }
     Snd_PlaySe(1, 1);
@@ -2678,7 +2682,7 @@ static char *Tb_Help(void) {
     case TB_WAIT:
         return sTb->found ? "Here we go! The match is starting!" : "Looking for a worthy challenger... Warm up in Training meanwhile!";
     case TB_BLOCK:
-        return "Sorry! Online fights have to be fair, so only the game straight off the disc can play.";
+        return "Sorry! Quick match is for the game straight off the disc. Modded? Play friends with a room!";
     case TB_SPAR:
         return "Warm up at the tournament while we search! Pick yourself and a sparring partner.";
     case TB_QUICK:
@@ -2845,7 +2849,7 @@ static void Tb_Speak(void) {
         }
         break;
     case TB_BLOCK:
-        Ps_Copy(focus, "Cannot go online. Online matches are only between two unmodded games.", 160);
+        Ps_Copy(focus, "No quick match. Quick match needs the original disc's data; with friends, both need the same data.", 160);
         break;
     case TB_LOBBY:
         Tb_LobbyFocus(focus, now);

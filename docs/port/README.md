@@ -2613,8 +2613,9 @@ match: the lobby stops with "Your game data and the other player's are not the s
 own, so both sides say so), and a session that got that far goes back to the menu with the same line. Until then
 two players with different discs (a modified image on one side) were matched, and the desync check ended the
 match a moment into the fight. Two copies with the same modified image have the same fingerprint and are let in.
-A copy that does not send it (0.1.37 and older) is let in as before; `NET_VERSION` stays. `BT3_TEST_FPRINT=<hex>`:
-testing, a copy claims that value. `BT3_LOBBY=direct:<port>` / `direct:<address>:<port>`: the lobby by address
+A copy that does not send it (0.1.37 and older) is let in as before; `NET_VERSION` stays (since 2026-10-27 that is
+a constant, and a game no longer connects before its own is known: "Online: whose data may meet" below).
+`BT3_TEST_FPRINT=<hex>`: testing, a copy claims that value. `BT3_LOBBY=direct:<port>` / `direct:<address>:<port>`: the lobby by address
 without its window (tests).
 
 ### Cache and cost
@@ -3995,3 +3996,54 @@ region chosen from elsewhere taking an Auto room there at 25 s, two different re
 with the local Worker: Dubai on Auto and São Paulo choosing South America both waited, São Paulo's screen saying
 "PLAYERS IN SOUTH AMERICA FIRST, EVERYONE AFTER 40 S", and were put together by Dubai's search at 40 s; both reached
 the character select. No change to the database.
+
+## Online: whose data may meet (2026-10-27)
+
+The rule, for every way into online play:
+
+| | needs |
+|---|---|
+| **quick match** (strangers; Dragon Net Battle, Tenkaichi Budokai Online, `BT3_LOBBY=quick:`) | the original disc's data (gameplay fingerprint = the table's, `plat_fprint_tab.h`) |
+| **with friends**: a room code, a lobby, an address, watching | the same data on both sides, modified or not (two players with the same mod may play) |
+
+- **Quick match** is refused where every search begins, `Port_LobbyStartQuick` (net.c): the matchmaking service is not
+  asked at all, the lobby's state is -3 and `Port_LobbyError` says "Quick match needs the original disc's data, and
+  your game data are not the disc's (what differs). With friends (a room code, a lobby or an address) you can play
+  when both have the same data." Dragon Net Battle's Quick match tab says it in orange before the search and greys
+  the button (`Port_LobbyQuickRefusal`); Tenkaichi Budokai Online keeps its window, now "No Quick Match" ("Quick
+  match needs the original disc's data. / With friends, both need the same data." and what changed), shown for
+  Quick Match only. Its Create Room, Join Room and Lobby no longer refuse modified data (before, every one of its
+  ways online wanted the original data, and Dragon Net Battle none).
+- **With friends** the two fingerprints are compared as before (`T_FPRINT` with the greetings; a spectator's and a
+  lobby member's greeting carries it, the host or owner compares).
+- **No game connects before its own fingerprint is known.** A start asked for earlier waits: the lobby's state 6
+  (`Port_LobbyPoll` gives 3, `Port_LobbyCheckingData`: the windows say "Checking your game data..."), the
+  eight-place lobby's create and join commands stay in its queue, and `net_start` (every session, also one started
+  by `BT3_NET_HOST`/`BT3_NET_JOIN` or `BT3_SESSION_TEST`) holds the picture with that line. Where this run computes
+  no fingerprint (`BT3_GS=none`, or online play asked before the data check began) `Port_DataFingerprintNeed`
+  (plat_fprint.c) starts it on a thread of its own; `PortFp_Run` runs once, the first caller's. The log:
+  `net: this game's gameplay data are still being checked: ... begins when its fingerprint is known`, then
+  `the gameplay fingerprint is known` (with the cache it takes a fraction of a second to a few seconds).
+- **A peer that sends no fingerprint.** 0.1.37 sends none and has `NET_VERSION` 5 like 0.1.37.1 to 0.1.38.9, which do;
+  nothing else in the greetings (HELLO, CONFIG, their capability word) tells them apart, and the matchmaking service
+  has `rel` 137 for both 0.1.37 and 0.1.37.1. So the rule is a constant, `FP_PEER_REQUIRED` (net.c): 0 for now (the
+  service's `MIN_RELEASE` is 137: 0.1.37 is still let in, unchecked, as are 0.1.38.x copies that connected before
+  their own was computed); set it to 1 together with `MIN_RELEASE` 138. Then a session that has heard no fingerprint
+  when it is set up (it travels with the greetings, the host's pings and its choices; one second more is given)
+  ends with "The other player's game did not say which game data it has (release 0.1.37, or it was still checking
+  its data): both need 0.1.38 or newer.", a spectator without one gets "not the same data", and so does a lobby
+  member. Copies of this release always send one (they wait for it).
+- Testing: `BT3_TEST_FPRINT=<hex>` now acts in plat_fprint.c (the Tenkaichi Budokai Online window and the quick-match
+  refusal see the claimed value too); `BT3_TEST_FPRINT=off` sends none, as 0.1.37; `BT3_TEST_FP_REQUIRED=1` is
+  `FP_PEER_REQUIRED` for one copy; `BT3_UI_NET_TAB=host|quick|join` (with `BT3_UI_OPEN=9`) opens Dragon Net Battle on
+  that tab.
+
+Tested (offscreen, the virtual pad, the local Worker stand-in): quick match original against original by
+`BT3_LOBBY=quick:S` and through Tenkaichi Budokai Online's screens, both at the character select; a copy claiming
+another fingerprint is refused before asking the service (`BT3_LOBBY=quick:S`; Tenkaichi Budokai Online's Quick
+Match shows "No Quick Match"; Dragon Net Battle's tab the orange line and a grey button) and opens a room by code
+from Tenkaichi Budokai Online. By address and by room code two copies with the same fake fingerprint play, two
+different ones are refused on both sides; both had started their lobby at the first blank and logged the wait.
+Spectators: the same data watch, other data are refused. Lobby: a member with the owner's data joins, another is
+refused; with `FP_PEER_REQUIRED` a member, a player (by address) without a fingerprint are refused. 0.1.38.9 against
+this build by address both ways: at the character select (also with `BT3_TEST_FP_REQUIRED=1` on this side).
