@@ -252,6 +252,21 @@ int Port_BattleSeqState(void) {
     return gBtlSeq != NULL ? gBtlSeq->state : -1;
 }
 
+/* For the lobby's tournaments (gs/net_lobby.c, result_watch): the battle sequence's state (-1 outside a battle) and,
+   once the fight is decided (states 4 to 6), the result's winner bits (include/battle/battle.h, BTL_RESULT_*: 1 side
+   0 won, 2 side 1 won, 4 a draw, 8 left without a finish); 0 before. Read only. */
+int Port_BattleOutcome(int *winner) {
+    extern struct { int winner, reason; } GAME_PTR Battle_GetResult(void);
+    *winner = 0;
+    if (gBtlSeq == NULL) {
+        return -1;
+    }
+    if (gBtlSeq->state >= 4 && gBtlSeq->state <= 6) {
+        *winner = Battle_GetResult()->winner;
+    }
+    return gBtlSeq->state;
+}
+
 /* Main-menu item 4, Dragon Net Battle, was confirmed (src/menu/menu_a.c): the settings code opens the online
    screen when it sees the request (port/src/gs/ui.cpp). Without a window nothing does. */
 volatile int gPortNetMenuRequest;

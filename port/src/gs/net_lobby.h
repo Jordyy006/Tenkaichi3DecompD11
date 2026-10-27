@@ -60,6 +60,7 @@ void Lobby_Stranger(const uint8_t *pkt, int n, const struct sockaddr_in *from, u
 #define LOBBY_NAME 20
 #define LOBBY_CHAT 32
 #define LOBBY_LOG 6
+#define LOBBY_TOUR 8 /* a tournament's entrants at most (the bracket's leaves) */
 typedef struct PortLobbyView {
     int state;                  /* 0 none, 1 connecting, 2 in the lobby, 3 closed (error says why; Port_LobbyDo(LOBBY_OK) clears it) */
     int owner;                  /* this copy owns the lobby */
@@ -84,15 +85,37 @@ typedef struct PortLobbyView {
     unsigned logTotal;
     char logName[LOBBY_LOG][LOBBY_NAME];
     char logText[LOBBY_LOG][164];
+    /* the tournament (docs/port/README.md, "Tournaments"): the owner's bracket, as every member has it. Matches are
+       numbered round by round from the first (a bracket of 8: 0..3 the quarterfinals, 4 and 5 the semifinals, 6 the
+       final); the first round's match i is between leaves 2i and 2i+1, a later round's between the winners of the
+       round before's matches 2i and 2i+1 */
+    int mode;                   /* 0 versus, 1 tournament (the first rule) */
+    int tour;                   /* 0 no bracket, 1 a tournament is on, 2 it is over (tourChamp) */
+    unsigned tourGen;           /* the tournaments drawn so far (a new one: it changed) */
+    int tourSize;               /* the bracket's leaves: 2, 4 or 8 */
+    int tourCount;              /* its entrants, 2..8 */
+    char tourName[LOBBY_TOUR][LOBBY_NAME];
+    int tourGone[LOBBY_TOUR];   /* the entrant left the lobby (its matches are lost by walkover) */
+    int tourMe;                 /* this game's entrant, -1 none */
+    int tourLeaf[LOBBY_TOUR];   /* the entrant at each leaf, -1 a bye */
+    int tourA[LOBBY_TOUR - 1], tourB[LOBBY_TOUR - 1]; /* each match's two: an entrant, -1 not known yet, -2 a bye */
+    int tourWin[LOBBY_TOUR - 1];/* its winner, -1 not decided */
+    int tourHow[LOBBY_TOUR - 1];/* 1 a bye, 2 a walkover, 3 played */
+    int tourCur;                /* the match to play next, or being played; -1 none */
+    int tourOn;                 /* the match being played now, -1 none */
+    int tourChamp;              /* the champion (an entrant), -1 none yet */
+    int readyCount;             /* places marked ready (the entrants of a tournament started now) */
 } PortLobbyView;
 
-enum { LOBBY_START = 1, LOBBY_BACK, LOBBY_LEAVE, LOBBY_KICK, LOBBY_MOVE, LOBBY_RULE, LOBBY_READY, LOBBY_OK };
-enum { LOBBY_RULE_BATTLE = 0, LOBBY_RULE_TIME, LOBBY_RULE_SPEED, LOBBY_RULE_ROLLBACK, LOBBY_RULE_DELAY };
+enum { LOBBY_START = 1, LOBBY_BACK, LOBBY_LEAVE, LOBBY_KICK, LOBBY_MOVE, LOBBY_RULE, LOBBY_READY, LOBBY_OK,
+       LOBBY_TOUR_NEW, LOBBY_TOUR_CALLOFF };
+enum { LOBBY_RULE_BATTLE = 0, LOBBY_RULE_TIME, LOBBY_RULE_SPEED, LOBBY_RULE_ROLLBACK, LOBBY_RULE_DELAY, LOBBY_RULE_MODE };
 
 int Port_LobbyView(PortLobbyView *out);   /* 0: no lobby (state 0) */
-/* START, BACK (the owner: the match ends for everyone), LEAVE, KICK a (place), MOVE a b (two places swap), RULE a b
-   (rule a one step: b -1 or +1), READY a (0 / 1), OK (a closed lobby's message was read). Done at the game's next
-   blank. */
+/* START (versus: the match of 1P and 2P; a tournament: its next match, the two put in 1P and 2P), BACK (the owner:
+   the match ends for everyone), LEAVE, KICK a (place), MOVE a b (two places swap), RULE a b (rule a one step: b -1
+   or +1), READY a (0 / 1), OK (a closed lobby's message was read), TOUR_NEW (a tournament of the places marked
+   ready, drawn), TOUR_CALLOFF (the tournament that is on ends without a champion). Done at the game's next blank. */
 void Port_LobbyDo(int what, int a, int b);
 void Port_LobbySay(const char *text);     /* a line of chat to everyone in the lobby */
 /* A new lobby, owned by this copy: with a room code (byCode) or on `port`. The rules to start from. 1 = under way. */

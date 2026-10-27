@@ -4047,3 +4047,84 @@ different ones are refused on both sides; both had started their lobby at the fi
 Spectators: the same data watch, other data are refused. Lobby: a member with the owner's data joins, another is
 refused; with `FP_PEER_REQUIRED` a member, a player (by address) without a fingerprint are refused. 0.1.38.9 against
 this build by address both ways: at the character select (also with `BT3_TEST_FP_REQUIRED=1` on this side).
+
+## Tournaments (2026-10-27)
+
+A lobby (the chapter "Lobbies") can run a knockout tournament of its members. Asked for by the user, and decided with
+him: the owner runs it and is the authority, every match is an ordinary lobby match (two play, everyone else watches),
+no CPU entrants.
+
+**In the game.** The lobby's rules have a new first row, Mode: Versus (as before) or Tournament (left / right, the
+owner's). In Tournament the battle is a single battle (its row says so and does not change); the time limit, speed,
+rollback and delay are the lobby's. The entrants are the places marked Ready when the owner presses Start Tournament
+(2 to 8 humans; the owner plays if it is marked ready, else it only runs the tournament). The bracket is drawn at once
+and shown to everyone: a page of its own (`TB_BRACKET`, src/menu/port_tbo.c, the same kit as the lobby's page), the
+two halves meeting at the final in the middle as the game's own tournament tree does, each entrant's box on the outer
+edge, the lines of each match turning inwards and lit gold as far as an entrant has got, the match to play glowing
+(its two boxes as the chosen bar), byes greyed with "BYE", entrants who are out greyed ("LEFT" on one who left), the
+champion's box over the final. The box at the foot says "Next: A vs B (Semifinal). Start it when both are here!" (a
+member: "The owner starts it."), "Now: ..." while it is played, "A is the champion! Congratulations!" at the end.
+Buttons: the owner Start Next Match (also START) and Back to the Lobby, a member Back to the Lobby; triangle / circle go
+back as well. The lobby's page has a Bracket button while there is a bracket, its Start button says Start Tournament /
+Start Next Match / New Tournament, and "TOURNAMENT ON" / "OVER" by the code. The bracket page comes up by itself when a
+tournament is drawn and when a tournament's match ends. When it is over the owner starts a new one (New Tournament, of
+those marked ready then) or switches the lobby back to Versus. Switching to Versus while a tournament is on asks first
+("Call Off the Tournament?").
+
+**Seeding.** The owner's game draws a number from the system's random source and shuffles the entrants with it
+(xorshift, Fisher-Yates); the number travels with the bracket. The bracket has 2, 4 or 8 leaves; with 3, 5, 6 or 7
+entrants the missing ones are byes, one per first-round match at most, shared out between the halves (with 8 leaves:
+the first match of the top half, the last of the bottom half, then the second of the top, the first of the bottom). An
+entrant with a bye goes straight to the second round.
+
+**A match.** The owner presses Start Next Match: its game puts the match's two in 1P and 2P (swapping places with
+whoever was there; the one on the left of the bracket in 1P, who hosts) and starts the lobby's match as always. Every
+copy in the match watches how its first battle ends (`result_watch`, net_lobby.c, through `Port_BattleOutcome` of
+headless.c: the battle sequence past its fight, states 4 to 6, and the result's winner bits, `BattleResult.winner`).
+It takes a result only once it has seen this match's fight on (state 3), and only when the end has held for 0.3 s (a
+K.O. that a late input takes back after a rollback is not taken). A player says its result with every ALIVE (and at
+once when it has it); the owner, as soon as the two players agree on a winner, marks it, says "A won the match" (or
+"A is the champion!"), and ends the match: everyone is back in the lobby on the bracket page, the winner's line gold.
+The result menu of the battle is cut short by that (a second or so after the finish announcement).
+
+The match is played again (it stays the next one) when the two results differ, when the battle had no winner (a draw
+on time, or it was left), when only one result came in 20 s, or when the match ends without one: the owner's "Back to
+the Lobby", the two players not connecting, a player's game leaving its session.
+
+**Leaving.** An entrant who leaves the lobby (or is removed, or falls silent) loses by walkover: its match if it is
+playing (the match ends for everyone, as a player leaving always ended it), else its next one as soon as its opponent
+is known ("A won by walkover"). The owner leaving closes the lobby, and the tournament with it, as before. A newcomer
+during a tournament is a spectator of it.
+
+**Protocol.** LOBBY_VERSION 3. STATE (now 608 bytes) carries after the lobby the mode and the bracket: state, size,
+number of entrants, the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
+and names, the leaves, each match's winner and how it was decided (bye, walkover, played), who left. ALIVE (40 bytes)
+carries the match whose result the member has and the result. Nothing else changed; the two players' traffic and the
+spectators' are as before. A game of 0.1.38.9 (lobby version 2) that joins a new lobby is told "The lobby owner's game
+is a different version: joining needs the same release.", and so is a new game joining a 0.1.38.9 lobby.
+
+**Text.** All of it is in port_tbo.c (the page, the buttons, the box's lines, the round names), so
+`port/tools/tbo_strings.py` lists it (notes for the bracket page added); the lobby's new notes, written by the owner's
+game in English, are translated where they are shown like the others ("%s won the match", "%s won by walkover", "%s is
+the champion!", "Tournament: %d entrants" and five whole lines).
+
+**Testing switches.** `BT3_LOBBY_DO` has `waitready <n>` (until n places are ready), `tour` (draw a tournament), `next`
+(start its next match once it can), `waittour` (until it is over); `rule 5 1` is the mode.
+
+Tested (this machine, offscreen, 127.0.0.1, by room code through a local copy of the Worker over SQLite; every copy
+with the virtual test pad, the players fed the random-press table, 60 s battles at 100%, rollback 8; `BT3_HASH` of
+each copy compared match by match, `BT3_SPEC_LINE=0`):
+
+| case | result |
+|---|---|
+| owner + 3, all entrants (4): three matches, the owner a player in one and a spectator in two | the bracket advanced each time, champion found; in every match each spectator's whole state identical to its host's (about 7,000 blanks a match), the two players' fight values identical; 0 of about 218 check values differed for each spectator |
+| owner + 4 (5 entrants, 3 byes: two in the top half, one in the bottom) | the byes went through, four matches played, the same identity in every match |
+| owner + 3, a member leaving 30 s into its own match (the second) | "Piccolo left the lobby", "Vegeta won by walkover", everyone back on the bracket; the final played |
+| 2 entrants with another table of presses | player 2 won: both players said so, the owner marked it |
+| a 0.1.38.9 game joining a new lobby by code, and a new game joining a 0.1.38.9 lobby | "The lobby owner's game is a different version: joining needs the same release." |
+| a Versus lobby match (start, the result menu, the owner back), a quick match, a room of two by code | as before: everyone back on the page, fight values identical |
+
+Pictures looked at: the lobby's page in Tournament (the six rules, Start Tournament, the Bracket button), the bracket
+of 2, 3, 4, 5 and 8 entrants when drawn, between matches (gold lines, the next match glowing), after a walkover
+("LEFT"), and with the champion, for the owner and a member. The Windows build compiles (mingw-w64). Not done: a person
+with a controller; two players on two networks; the spectator's pause menu has no bracket.
