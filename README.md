@@ -42,7 +42,9 @@ game's data from it, and it stays on your computer.
   [adding_songs.md](docs/port/adding_songs.md).
 - In the game, **F1** opens the settings, or **START + SELECT** on a controller (which also works the window: d-pad and
   Cross, Circle to leave, L1 / R1 for the tabs). Controls has a row to choose another key or button. When a newer release
-  is available, the window offers to download and install it automatically, restarting directly into the new version.
+  is available, the main menu says so and the window offers to download it in the background, check its signature
+  and, when you choose "Restart now", install it and start the new version (your saves, settings, game data, mods
+  and texture packs are never touched).
   **Esc** asks before it closes the game, and the window has an "Exit game" button. Its Cheats tab has "Unlock everything" (a debug function the game's
   developers left in: all characters, stages, music, items and Zenni).
 
@@ -94,6 +96,12 @@ On a machine without a working Vulkan the setup window and the game use OpenGL b
 from the start (a Vulkan driver that starts but is incomplete, as on Intel Ivy Bridge), set `BT3_GPU_API=gl`:
 `BT3_GPU_API=gl ./Tenkaichi3Decomp-setup`, and the same for `./Tenkaichi3Decomp`. The setup also runs without a
 window: `./Tenkaichi3Decomp-setup --install <disc image>`.
+
+**Updates.** Once per start the game asks GitHub for the newest release (F1 > Misc > "Check for updates" turns that
+off). A newer one is announced over the main menu; F1 has Update now, Later and What's new. The download runs while
+you play, its signature is checked, and "Restart now" replaces the program's files (the old ones are kept as `.old`
+until the next start, and put back if anything fails) and starts the new version. Updating by hand, by copying the
+new files over the old ones, works as before. The in-game updater is based on PR #107 by JosephLlacchua.
 
 ## Building from source
 

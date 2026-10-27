@@ -2085,8 +2085,8 @@ If the number is higher than this program's:
 Nothing is downloaded or installed by the game. Updating is copying the new files over the old ones.
 
 F1, Misc (a tab of its own, the seventh): "Check for updates" (setting `update_check`, on by default) turns the request off. It is not made under the
-offscreen or dummy video drivers (test runs). `BT3_UPDATE_CHECK=1` / `0` overrides both; `BT3_UPDATE_LATEST=<n>`
-is taken as the answer without asking. `PORT_UPDATE_REPO` (port_release.h) names the repository: a fork that
+offscreen or dummy video drivers (test runs). `BT3_UPDATE_CHECK=1` / `0` overrides both. (From the release after 0.1.38.9
+the game also installs updates: see "Automatic updates" below; `BT3_UPDATE_LATEST` is gone.) `PORT_UPDATE_REPO` (port_release.h) names the repository: a fork that
 publishes its own releases changes it, or its players are told of this repository's.
 
 GitHub allows 60 such requests an hour from one address without an account; one per start is far inside it, and a
@@ -4185,3 +4185,85 @@ Pictures looked at: the lobby's page in Tournament (the six rules, Start Tournam
 of 2, 3, 4, 5 and 8 entrants when drawn, between matches (gold lines, the next match glowing), after a walkover
 ("LEFT"), and with the champion, for the owner and a member. The Windows build compiles (mingw-w64). Not done: a person
 with a controller; two players on two networks; the spectator's pause menu has no bracket.
+
+## Automatic updates (2026-10-27)
+
+The in-game updater is based on **PR #107 by JosephLlacchua** ("Auto-updater: in-game release download, progress
+bar, extraction and restart"), brought onto 0.1.38.9 with his authorship: the download in the game (WinHTTP, curl),
+its progress bar, miniz to unpack, the **rename trick** to replace a running program, and the restart into the new
+version. On top of it (`port/src/gs/net_update.c`, `ui.cpp`): the exact version, the player's choice of when, a
+signature check, every path from the program's own folder, every file of the zip swapped (no fixed list), the
+player's files protected, and an install that is undone on any failure.
+
+**The version.** Each build knows its full number: `port/tools/undefined.py` writes `PORT_VERSION` into the generated
+`port_version.h` from `BT3_VERSION`, which the release workflow takes from the tag (`v0.1.38.10` -> `0.1.38.10`;
+`inside.sh` prints it). Without it a build is `dev` and is never offered an update. The check compares it with the
+newest release's tag as dotted numbers (`update_sign.c`): 0.1.38.7 < 0.1.38.9 < 0.1.38.10 < 0.1.39; a tag that is not
+two to four numbers (`v0.1.39-rc1`) is never offered. The old check compared only `PORT_RELEASE` (0.1.38), so patch
+releases were never announced ("the newest release is 0.1.38, this is 0.1.38" to a 0.1.38.7 player). `PORT_RELEASE`
+is still what the matchmaking service is told.
+
+**The flow.**
+1. Four seconds after the settings window is ready, one GET of `api.github.com/repos/<repo>/releases/latest`
+   (`PORT_UPDATE_REPO`; drafts and pre-releases are not "latest"). Its tag, notes (`body`), page and list of files are
+   read; this system's zip by name (`Tenkaichi3Decomp-linux-x64.zip` / `-windows-x64.zip`), its size and GitHub's
+   SHA-256 (`digest`), and `<zip>.sig`.
+2. Newer: a line at the top of the picture over the main menu (mode 4) and the port's screens (mode 80, Tenkaichi
+   Budokai Online): "Update 0.1.38.10 available. F1 to update." At the top of F1: **Update now**, **Later** (no line
+   until the next start; the next start reminds again), **What's new** (the notes, as text), **Release page**.
+3. Update now: the zip downloads into `update/` beside the program in a thread ("Downloading update 0.1.38.10: 45%"
+   over the menus, a progress bar in F1). Offline play goes on. From then on no new online session starts
+   (`Port_OnlineBlocked`: `Port_LobbyStart` and the online screens' `Tb_Vanilla` refuse with "An update is being
+   installed: online play is off until the game restarts"); a session that is on is never interrupted.
+4. The checks: the size, the SHA-256 (a clear "damaged download" message), then the **Ed25519 signature** of the whole
+   zip against the public key compiled in (below). Wrong: nothing is installed; the reason and the release page.
+5. **Restart now** (disabled during an online session or a lobby), in two steps, every path from
+   `SDL_GetBasePath()` (the PR's were relative to the working folder: wrong when a shortcut starts the game from
+   elsewhere):
+   a. every file of the zip is written beside its place as `<name>.new`, folders made as needed;
+   b. each file in place is renamed to `<name>.old` and its `.new` renamed into its place. A running program and its
+      loaded libraries cannot be written or deleted on Windows, but they can be renamed: that is the PR's trick, here
+      for every file the zip ships.
+   A failure in a or b undoes everything (the `.new` files go, each `.old` is renamed back, added files and folders
+   removed) and the old version goes on, the reason in F1. Then `update/result.txt` and `update/cleanup.txt` are
+   written, the new program is started from the folder (the working folder kept) and this one exits.
+6. The new version says "Updated to 0.1.38.10." (port catalog `update/done`) and removes the `.old` files listed in
+   `update/cleanup.txt` (one still in use stays listed for the next start).
+
+**Never written by an update**, even if a zip had them (`user_file` in net_update.c; a release ships none of them):
+`saves/`, `gamedata/` (the disc's data, `gamedata/mods/`, the menu text made from the disc), `mods/`, `update/`,
+`bars/` (faces.txt), `net_session/`, `screenshots/`, `replays/`, `shots/`, `bt3_settings.txt`, `bt3_pipelines.txt`,
+`online_name.txt`, `zdump.bin`, `bt3_log*`, `bt3_crash*`, `a11y_*_own.txt`, `a11y_log.txt`, `a11y_untranslated.txt`,
+`prism.dll`, `libprism.so`, and everything in `textures/`, `songs/` and `stages/` but the `README.txt` a release has
+there (texture packs, added songs and stages). `fonts/fonts.tsv` takes the new list and then the player's own lines
+(a font the new list does not name) under "# Your own fonts (kept by the update):". Nothing is deleted but the
+`.old` files and the update's own download. A zip must be the game's folder (`Tenkaichi3Decomp/...`) with this
+system's program in it; a path with `..`, `\` or `:` refuses the whole update. Linux keeps the zip's file modes; the
+programs and `.so` files stay executable.
+
+**The signature.** Monocypher 4.0.2 (`port/third_party/monocypher`, BSD-2-Clause or CC0; `licenses/monocypher.txt`
+in a release) checks Ed25519 (RFC 8032). The public key is `PORT_UPDATE_KEY_RELEASE` in `port/src/update_key.h`; it
+is a **placeholder of zeros** until the keeper makes the key (`port/release/README.md`): a build with zeros, or a
+release without `.sig`, announces the update and shows its page but installs nothing. `port/tools/update_key.py`
+makes the key pair, signs and verifies (plain Python, checked against the RFC's vectors and the `cryptography`
+package). The workflow signs both zips for a tag with the secret `UPDATE_SIGNING_KEY` and attaches the `.sig` files;
+without the secret it warns and the release is unsigned; a secret that does not match `update_key.h` stops it.
+miniz (the PR's, 3.1.2, MIT) unpacks; its licence is `licenses/miniz.txt`.
+
+**Testing.** `BT3_UPDATE_API=<http://127.0.0.1:port>` asks a local stand-in instead of GitHub (a folder served by
+`python3 -m http.server` with `repos/<repo>/releases/latest` and the files it names); `BT3_UPDATE_AUTO=1` presses Update
+now and Restart now; `BT3_UPDATE_FAIL_AT=<n>` makes the n-th swap fail; `BT3_UPDATE_TEST_KEY=<hex>` at build time
+builds with a throw-away public key. `sh port/tests/update/run.sh`: 34 checks of the numbers, SHA-256 and Ed25519.
+
+| case (Linux, a scratch install of a 0.1.38.9 built with a test key, the 0.1.38.10 zip from the stand-in) | result |
+|---|---|
+| Update now, download, verify, Restart now | the new 0.1.38.10 runs from the folder (another working folder), says it, removes the .old files; every file of the zip in place; the player's files unchanged byte for byte; six entries of theirs put into the zip on purpose not written; fonts.tsv: the new list and the player's line; programs 0755 |
+| a zip signed with another key | "signature is NOT valid", nothing installed |
+| a release without .sig | announced, not installed ("The release is not signed") |
+| a read-only folder (step a) | refused, every file as before |
+| the 6th swap fails (after the program itself was swapped) | everything put back, the old version goes on |
+| a zip with `../escaped.txt` | refused, nothing written |
+| Windows under wine: the running Tenkaichi3Decomp.exe (a driver of net_update.c) and the loaded SDL3.dll renamed, the zip in place; the next start removes every .old; the 8th swap failing: all back | as expected |
+
+Not tested: the real Windows (only wine), the restart into the new game on Windows, the real GitHub (its answer's
+shape was taken from its documentation; the stand-in serves the same fields).
