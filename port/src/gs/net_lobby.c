@@ -90,7 +90,7 @@
 #include "net_relay.h"
 
 #define MAGIC 0x4E335442u
-enum { T_HELLO = 1, T_HELLO_ACK = 2, T_SPEC_HELLO = 20 };
+enum { T_HELLO = 1, T_HELLO_ACK = 2, T_SPEC_HELLO = 20, T_SPEC_NO = 22, SPEC_NO_VERSION = 1 };
 enum { T_L_HELLO = 30, T_L_NO, T_L_STATE, T_L_ALIVE, T_L_GO, T_L_BACK, T_L_LEAVE, T_L_CLOSE, T_L_CHAT, T_L_SAID, T_L_INVITE, T_L_TOKEN };
 enum { LOBBY_VERSION = 3, /* 2: STATE carries the member's nonce (its greeting's), which a member connecting asks for; 3: tournaments (the bracket in STATE, results in ALIVE, the rejoin token in HELLO, TOKEN) */ FP_MARK = 0x46505231, LOBBY_CAP = 0x4C4F4231 /* "1BOL": a game's 1v1 greeting says it knows lobbies */ };
 enum { LNO_VERSION = 1, LNO_DATA = 2, LNO_FULL = 3 };
@@ -217,6 +217,9 @@ static struct {
     struct sockaddr_in cand[MATCH_ADDRS + 1];
     int candCount, candRelay, candGen;
     uint64_t candSince, helloNs, heardNs, aliveNs;
+    int probe;                 /* a member joining a typed address: it also asks as a spectator would (probe_send) */
+    uint64_t probeNs;
+    uint64_t otherNs;          /* the owner: when someone of another version last tried to join (said once a minute) */
     uint32_t nonce, seqSeen, goGen, inGen, backGen;
     char self[64];
     /* both */
@@ -500,6 +503,7 @@ int Port_LobbyCreate(int byCode, int port, int battle, int time, int speed, int 
     memset(&sView, 0, sizeof(sView));
     sView.state = 1;
     sView.owner = 1;
+    sView.port = byCode ? 0 : port; /* (the page says "opening the port" meanwhile) */
     SDL_UnlockSpinlock(&sLock);
     queue_put(&c);
     return 1;
@@ -1295,6 +1299,10 @@ static void owner_hello(const uint8_t *pkt, int n, const struct sockaddr_in *fro
     }
     if (why == 0 && (free < 0 || s == LOBBY_SLOTS)) {
         why = LNO_FULL;
+    }
+    if (why == LNO_VERSION && (sL.otherNs == 0 || now_ns() - sL.otherNs > 60 * SEC)) {
+        sL.otherNs = now_ns(); /* (its greetings come five times a second until it gives up) */
+        note_set("Someone with another version of the game tried to join.");
     }
     if (why != 0) {
         uint32_t no[4] = {MAGIC, T_L_NO, why, nonce};
@@ -2189,6 +2197,17 @@ static void timers(void) {
                     hello_send(&sL.cand[i]);
                 }
             }
+            if (sL.probe && now - sL.candSince > 2 * SEC && now - sL.probeNs > SEC) {
+                /* No answer yet from a typed address: it may be a game of a release before 0.1.39 hosting a match
+                   of two, which ignores a lobby's greeting. A spectator's greeting too short to be one is answered
+                   by such a game with SPEC_NO_VERSION (taken in Lobby_Pump: "a different version"), and a 1v1
+                   greeting of this version makes its page say "another version tried". A lobby's owner answers
+                   both with an invitation, ignored here (its answer to the lobby's greeting is the one taken). */
+                uint32_t probe[3] = {MAGIC, T_SPEC_HELLO, 0}, hello[4] = {MAGIC, T_HELLO, (uint32_t)NetIo_Version(), LOBBY_CAP};
+                sL.probeNs = now;
+                send_to(probe, sizeof(probe), &sL.cand[0]);
+                send_to(hello, sizeof(hello), &sL.cand[0]);
+            }
             if (now - sL.candSince > CONNECT_NS) {
                 if (sTok.has && strcmp(sTok.code, sJoinCode) == 0) {
                     tok_forget("its lobby does not answer");
@@ -2476,6 +2495,7 @@ static void join_address(const char *address, int port) {
         return;
     }
     join_address_found(&a);
+    sL.probe = 1;
 }
 
 /* BT3_LOBBY_DO (tests): the next command, when its time has come. */
@@ -2727,6 +2747,10 @@ void Lobby_Pump(void) {
                 Lobby_Packet(pkt, n, &from, type);
             } else if (type == T_HELLO || type == T_SPEC_HELLO) {
                 Lobby_Stranger(pkt, n, &from, type);
+            } else if (type == T_SPEC_NO && n >= 12 && sL.on == 2 && sL.state == 1 && sL.probe && same(&from, &sL.cand[0])
+                       && get(pkt, 2) == SPEC_NO_VERSION) {
+                /* (the answer to the probe: a game at that address that is not a lobby of this release) */
+                member_closed("The game at that address is a different version: joining needs the same release.");
             }
             if (sL.on == 0) {
                 return;

@@ -76,8 +76,7 @@ int Port_ClashSquareX(void);                   // what a press is worth, in quar
 void Port_ClashSquareXSet(int quarters);
 extern int gsInterp;                           // gs_draw.c: in-between pictures on (1) / off (0); -1 before the first frame
 void Port_SettingsWrite(void);
-int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
-int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
+int Port_LobbyStartCode(int host, const char *code);         // gs/net.c: a code of the matchmaking service (a lobby's)
 int Port_LobbyStartQuick(int queue);                         // a quick match: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20
 void Port_LobbyQueuesAsk(void);                              // asks the service how many wait in each queue
 void Port_LobbyHelloAsk(void);                               // asks it whether this release is new enough
@@ -91,15 +90,11 @@ int Port_LobbyCheckingData(void);                           // a start waits for
 const char *Port_LobbyQuickRefusal(void);                   // why no quick match: NULL none, "" data being checked
 void Port_LobbyCancel(void);
 void Port_LobbyLaunch(void);
-int Port_LobbySpectate(const char *address, int port);        // gs/net.c: watch the match hosted there (a spectator)
-int Port_LobbySpectateCode(const char *code);                // ... the match of that room code
-int Port_LobbySpectateWaiting(void);                         // ... the host is there and has no match yet
 int Port_NetSpectating(void);                                // this copy watches a match
 void Port_NetSpecLeave(void);                                // ... stop watching (at the game's next blank)
 void Port_NetSpecViewSet(int view);                          // ... 0 player 1's view, 1 player 2's, 2 both (split)
 int Port_NetSpecView(void);
 int Port_NetSpecStatus(int *out);                            // ... catching up (%), waiting, desync blank
-void Port_NetSpectatorsAllow(int on);                        // the host lets spectators in
 int Port_NetWatchers(void);                                  // how many watch this match (the players)
 const char *Port_NetWatcher(int i);                          // ... their names
 }
@@ -721,7 +716,11 @@ static void build_quit(void) {
 
 // Dragon Net Battle: the first online window of the port, behind the main menu's item 4. Tenkaichi Budokai Online's
 // screens (src/menu/port_tbo.c) do everything it does; it is opened from F1 > Online > Advanced, and listed in the
-// main menu only when the player asks for it there (setting net_dnb_menu).
+// main menu only when the player asks for it there (setting net_dnb_menu). Since 0.1.39 a match with a friend is a
+// lobby's (gs/net_lobby.c), as on the screens: the Host tab opens a lobby (with a code, or on a port) with its rules,
+// the Join tab joins one (its code, or its owner's address); the lobby itself is the screens' page, which the main
+// menu opens as soon as this game is in one. There is no room of two and no "Watch" any more: a spectator is a
+// lobby's member in a spectator's place. Quick match is as it was.
 extern "C" {
 extern volatile int gPortNetMenuRequest;
 extern volatile int gPortNetWindowClose; // gs/state.c
@@ -803,10 +802,9 @@ static void quick_status(int state, int &lastState, const char *name) {
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
     static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
-    static bool useCode = true;       // host with a room code (no port forwarding) or on a port
+    static bool useCode = true;       // a lobby with a code (no port forwarding) or on a port
     static char roomCode[8] = "";     // the code to join with
-    static int lastState = 0;         // what the lobby said last (for its messages after a failure)
-    static bool watching;             // the lobby is a spectator's
+    static int lastState = 0;         // what the search said last (for its messages after a failure)
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
 
@@ -836,7 +834,8 @@ static void build_net(void) {
                 ImGui::Separator();
             }
         }
-        ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
+        ImGui::TextWrapped("Fight players on other computers. One of you opens a lobby, the others join it with its code or "
+                           "the owner's address; its page (Tenkaichi Budokai Online) has the places, the rules and the matches.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(U(260.0f));
         {
@@ -863,10 +862,10 @@ static void build_net(void) {
             if (ImGui::BeginTabItem("Host", NULL, tabFlags("host"))) {
                 static const char *const kRoll[] = {"Off (wait for each other)", "Up to 2 frames", "Up to 4 frames", "Up to 6 frames", "Up to 8 frames"};
                 tab = 0;
-                ImGui::Checkbox("Use a room code (no port forwarding needed)", &useCode);
-                ImGui::SetItemTooltip("You get a short code to tell the other player, and the two games find each other through a\n"
-                                      "small matchmaking service. Works with most home routers. Without it you host on a port,\n"
-                                      "which must be reachable from the other player (port forwarding or a virtual network).");
+                ImGui::Checkbox("Use a code (no port forwarding needed)", &useCode);
+                ImGui::SetItemTooltip("Your lobby gets a short code to tell the others, and the games find each other through a\n"
+                                      "small matchmaking service. Works with most home routers. Without it the lobby is on a port,\n"
+                                      "which must be reachable from the others (port forwarding or a virtual network).");
                 ImGui::BeginDisabled(useCode);
                 ImGui::SetNextItemWidth(U(120.0f));
                 ImGui::InputText("Port", port, sizeof(port), ImGuiInputTextFlags_CharsDecimal);
@@ -925,18 +924,7 @@ static void build_net(void) {
                                               "release only 100%%.", Port_NetSpeedStandard());
                     }
                 }
-                {
-                    bool watch = Port_Setting("net_spectators", 1) != 0;
-                    if (ImGui::Checkbox("Let others watch the match", &watch)) {
-                        Port_SettingSave("net_spectators", watch ? 1 : 0);
-                        Port_SettingsWrite();
-                    }
-                    Port_NetSpectatorsAllow(watch);
-                    ImGui::SetItemTooltip("Up to 6 spectators can watch, with your address or room code (the Join tab's \"Watch the\n"
-                                          "match\", or Watch on Tenkaichi Budokai Online's Join Room and Join by Address). They cost\n"
-                                          "your match nothing: it never waits for them. Also in F1 > Online.");
-                }
-                ImGui::TextDisabled("The host's choices apply to both players. Both need the same game data (mods too).");
+                ImGui::TextDisabled("The lobby's first rules; its owner changes them on its page. Everyone needs the same game data.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Quick match", NULL, tabFlags("quick"))) {
@@ -1036,52 +1024,12 @@ static void build_net(void) {
             }
             if (tab == 2) {
                 quick_status(state, lastState, name);
-            } else if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
-                if (tab == 0 && Port_LobbyCode()[0] != '\0') {
-                    ImGui::TextUnformatted("Room code:");
-                    ImGui::SameLine();
-                    ImGui::SetWindowFontScale(1.8f);
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", Port_LobbyCode());
-                    ImGui::SetWindowFontScale(1.0f);
-                    {
-                        static Uint64 copiedAt;
-                        ImGui::SameLine();
-                        if (ImGui::Button("Copy")) {
-                            copiedAt = SDL_SetClipboardText(Port_LobbyCode()) ? SDL_GetTicks() : 0;
-                        }
-                        ImGui::SetItemTooltip("Copy the code, to paste it to the other player.");
-                        if (copiedAt != 0 && SDL_GetTicks() - copiedAt < 2000) {
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("Copied");
-                        }
-                    }
-                    ImGui::TextUnformatted(state == 3 ? "Tell the other player this code. Waiting for them to join..." : "The other player has joined. Connecting...");
-                } else if (Port_LobbyCheckingData()) {
-                    ImGui::TextUnformatted("Checking your game data... Connecting begins when it is done.");
-                } else {
-                    ImGui::TextUnformatted(watching && Port_LobbySpectateWaiting() ? "The room's match has not begun yet. Waiting for it..."
-                                           : state == 1 ? (watching ? "Found the room. Asking the host to let you watch..." : "Found the room. Connecting to the host...")
-                                           : tab == 0 ? "Getting a room code..." : "Looking for the room...");
-                }
+            } else if (state == 3 || state == 1) { // joining a code: asking the service, then reaching the lobby's owner
+                ImGui::TextUnformatted(Port_LobbyCheckingData() ? "Checking your game data... Connecting begins when it is done."
+                                       : state == 1 ? "Found the lobby. Connecting to its owner..." : "Looking for the lobby...");
                 if (ImGui::Button("Cancel", ImVec2(U(120.0f), 0.0f))) {
                     Port_LobbyCancel();
                     lastState = 0;
-                }
-            } else if (state == 1) {
-                if (tab == 0) {
-                    ImGui::Text("Waiting for the other player on port %s...", port);
-                    if (Port_LobbyOther()) {
-                        ImGui::TextWrapped("A player with a different version of the game is trying to join. Both need the same release.");
-                    }
-                } else if (watching && Port_LobbySpectateWaiting()) {
-                    ImGui::TextWrapped("The host is there but its match has not begun yet. You will watch it as soon as it does...");
-                } else if (watching) {
-                    ImGui::Text("Asking %s to let you watch...", address);
-                } else {
-                    ImGui::Text("Looking for %s...", address);
-                }
-                if (ImGui::Button("Cancel", ImVec2(U(120.0f), 0.0f))) {
-                    Port_LobbyCancel();
                 }
             } else {
                 if (lastState == -3) {
@@ -1090,68 +1038,63 @@ static void build_net(void) {
                     ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. "
                                        "Hosting on a port (with port forwarding or a virtual network such as Tailscale) still works.");
                 }
-                bool can = byCode ? (tab == 0 || strlen(roomCode) == 6) : atoi(port) > 0 && (tab == 0 || address[0] != '\0');
+                bool can = Port_OnlineBlocked() == NULL && (byCode ? (tab == 0 || strlen(roomCode) == 6) : atoi(port) > 0 && atoi(port) < 65536 && (tab == 0 || address[0] != '\0'));
+                bool lobby = false; // a lobby was opened or joined: its page is the screens' (the main menu opens it)
                 ImGui::BeginDisabled(!can);
-                if (ImGui::Button(tab == 0 ? "Host a match" : "Join the match", ImVec2(U(200.0f), 0.0f))) {
-                    if (tab == 0 && roll >= 0) {
-                        Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
-                        if (battle >= 0) {
-                            Port_NetSpeedSet(speed);
-                            Port_SettingSave("net_speed_host", speed);
-                            Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
-                            Port_SettingSave("net_battle", battle);
-                            Port_SettingSave("net_time", timeLimit);
-                        }
-                        Port_SettingSave("net_rollback2", roll * 2);
-                        Port_SettingSave("net_delay2", delay - 1);
-                        Port_SettingsWrite();
-                    } else {
-                        Port_NetOptions(-1, -1); // joining: the host's choices arrive with its answer
-                    }
+                if (ImGui::Button(tab == 0 ? "Open a lobby" : "Join the lobby", ImVec2(U(200.0f), 0.0f))) {
                     Port_NetNameSet(name);
                     Port_SettingTextSave("net_name", name);
-                    Port_SettingsWrite();
                     lastState = 0;
-                    watching = false;
-                    if (byCode) {
-                        Port_LobbyStartCode(tab == 0, roomCode);
-                    } else {
-                        Port_LobbyStart(tab == 0, address, atoi(port));
-                    }
-                }
-                if (tab == 1) { // the same match, only watched (a spectator)
-                    ImGui::SameLine();
-                    if (ImGui::Button("Watch the match", ImVec2(U(160.0f), 0.0f))) {
-                        Port_NetNameSet(name);
-                        Port_SettingTextSave("net_name", name);
-                        Port_SettingsWrite();
-                        lastState = 0;
-                        watching = true;
-                        if (byCode) {
-                            Port_LobbySpectateCode(roomCode);
-                        } else {
-                            Port_LobbySpectate(address, atoi(port));
+                    if (tab == 0) {
+                        if (roll < 0) {
+                            roll = Port_RollCan() ? 4 : 0;
                         }
+                        if (battle < 0) {
+                            battle = 0;
+                        }
+                        if (speed < 0) {
+                            speed = Port_NetSpeedStandard();
+                        }
+                        Port_SettingSave("net_speed_host", speed);
+                        Port_SettingSave("net_battle", battle);
+                        Port_SettingSave("net_time", timeLimit);
+                        Port_SettingSave("net_rollback2", roll * 2);
+                        Port_SettingSave("net_delay2", delay - 1);
+                        Port_LobbyCancel();
+                        Port_LobbyCreate(useCode ? 1 : 0, useCode ? 0 : atoi(port), battle, timeLimit, speed, roll * 2, delay); // (the lobby's delay: 0 automatic, else frames + 1, as here)
+                        lobby = true;
+                    } else if (byCode) {
+                        Port_NetOptions(-1, -1);
+                        Port_LobbyStartCode(0, roomCode); // (a lobby's code: Port_LobbyPoll says 5, below, and this game is its member)
+                    } else {
+                        Port_LobbyCancel();
+                        Port_LobbyJoin(address, atoi(port));
+                        lobby = true;
                     }
-                    ImGui::SetItemTooltip("Watch the host's match as a spectator: you see the fight as it is played, about a\n"
-                                          "second behind, and your controller does nothing. Up to 6 can watch a match.");
+                    Port_SettingsWrite();
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Back", ImVec2(U(120.0f), 0.0f))) {
                     open = false;
                 }
+                if (lobby) {
+                    const char *said = MenuTranslation_PortText(PORT_TEXT_LOBBY_JOINED);
+                    Port_UiNotice(said != NULL ? said : "You are in the lobby. Its screen opens from the main menu (Tenkaichi Budokai Online).");
+                    set_open(false);
+                    ImGui::End();
+                    return;
+                }
                 if (state == -2) {
-                    ImGui::TextWrapped("The host's game is a different version. Both players need the same release.");
+                    ImGui::TextWrapped("The other game is a different version. Everyone needs the same release.");
                 } else if (state < 0) {
-                    ImGui::TextWrapped(tab == 0 ? "That port cannot be used (another program has it?)." : "That address is not known.");
+                    ImGui::TextWrapped("The search could not be started.");
                 }
             }
         }
         ImGui::Spacing();
-        ImGui::TextDisabled("When you are connected the game switches to the match: both players get the same roster,");
-        ImGui::TextDisabled("with everything unlocked, and your own save is left alone. Leaving the match brings you");
-        ImGui::TextDisabled("back to where you were. The host's controls also work the menus.");
+        ImGui::TextDisabled("In a match both players get the same roster, with everything unlocked, and your own save is");
+        ImGui::TextDisabled("left alone. When the match ends everyone is back on the lobby's page.");
     }
     ImGui::End();
     if (!open) {
@@ -1845,16 +1788,9 @@ static void misc_tab(void) {
 // F1 > Online: the settings of online play (Tenkaichi Budokai Online's screens are the way in: the game's main menu), and
 // under Advanced the old Dragon Net Battle window, which the screens have replaced (it is kept for testing and for
 // whoever still wants it: the same connections, in a plain window).
+// (Since 0.1.39 spectators are a lobby's members in its spectators' places, whom its owner lets in or removes: the
+// row "Let others watch your matches", for the rooms of two, went with them.)
 static void online_tab(void) {
-    bool watch = Port_Setting("net_spectators", 1) != 0;
-    if (ImGui::Checkbox("Let others watch your matches", &watch)) {
-        Port_SettingSave("net_spectators", watch ? 1 : 0);
-        Port_SettingsWrite();
-        Port_NetSpectatorsAllow(watch);
-    }
-    ImGui::SetItemTooltip("Up to 6 spectators can watch a match you host, with its room code or your address (Join Room or\n"
-                          "Join by Address, then Watch). They cost your match nothing: it never waits for them.");
-    ImGui::Spacing();
     bool desyncEnds = Port_Setting("net_desync_end", 0) != 0;
     if (ImGui::Checkbox("End an online match on a desync", &desyncEnds)) {
         Port_SettingSave("net_desync_end", desyncEnds);
@@ -1892,7 +1828,7 @@ static void online_tab(void) {
     }
     if (ImGui::CollapsingHeader("Advanced")) {
         ImGui::TextWrapped("Dragon Net Battle is the first online window of this port. Tenkaichi Budokai Online (the main "
-                           "menu) does everything it does: rooms by code or by address, watching, lobbies and quick matches.");
+                           "menu) does everything it does: lobbies by code or by address, and quick matches.");
         ImGui::BeginDisabled(Port_NetActive() != 0);
         if (ImGui::Button("Open Dragon Net Battle")) {
             gPortNetMenuRequest = 1; // (opened in place of this window at the next frame: frame_build)

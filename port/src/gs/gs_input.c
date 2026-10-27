@@ -217,7 +217,7 @@ int PortTbo_TextRead(void) {
    puts it on the clipboard (PortInput_TboClipboard, from the overlay's frame: SDL wants the clipboard there). */
 static char sTboCopy[64];
 static int sTboCopyDue;
-static int sTboPasteDue; /* the keypad's PASTE: 1 the clipboard's room code (Join Room), 2 its plain characters (Join
+static int sTboPasteDue; /* the keypad's PASTE: 1 the clipboard's code (Join), 2 its plain characters (Join
                             by Address), typed on the window's thread */
 
 void PortTbo_Copy(const char *text) {

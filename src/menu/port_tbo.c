@@ -9,20 +9,21 @@
  * runs this screen. Its own look for online play, after the mockups of online_design: every picture, piece,
  * letter and button is its own (tbo/ui/*.png, drawn by the renderer at full resolution; see "the pictures" below).
  *
- * The hub lists nine modes. What runs today is what the room-code lobby of port/src/gs/net.c can do (the same as
- * the Dragon Net Battle window, without the window):
- *   Create Room   the host's rules, then a room code to give the other player;
- *   Join Room     a pad keypad (the PC keyboard types too) for the other player's code;
- *   the search    a Dragon Radar while the two games find each other; square: "Train While Waiting" leaves for the
- *                 Ultimate Training menu with the room still open (net.c polls it each blank and starts the match
- *                 from wherever the game is when the other player comes);
- *   Profile       the name the other player sees and the defaults of the connection.
- * Join Room's second row of buttons has Watch (the room's match as a spectator, gs/net.c's Port_LobbySpectateCode)
- * and By Address (Join by Address: the host's address and port on a keypad, then Join or Watch, without the matchmaking
- * service); Create Room's last row, Host by Address, opens a room on this PC's port for such a join. Everything the
- * Dragon Net Battle window does is here; the window itself is only in F1 > Online > Advanced.
- * Quick Match, Ranked Match, Friends, Tournament, Replays and Leaderboard need the matchmaking service to do more
- * than room codes (a public queue, player ids, ratings): they are listed, marked SOON, and say what they will be.
+ * The hub lists nine modes. What runs today is what the netcode of port/src/gs/net.c and net_lobby.c can do (the same
+ * as the Dragon Net Battle window, without the window):
+ *   Quick Match   a stranger from the matchmaking service's queue; the search shows a Dragon Radar; square: "Train
+ *                 While Waiting" leaves for the Ultimate Training menu with the search still on (net.c polls it each
+ *                 blank and starts the match from wherever the game is when the rival comes);
+ *   Lobby         a lobby of up to eight (net_lobby.c): Open Lobby gets a code for the others, Host by Address opens
+ *                 it on this PC's port (setting net_port) instead. Playing a friend is a lobby of two: its page has
+ *                 the rules, rematches, spectators' places and tournaments (0.1.39: lobbies replaced the rooms of two);
+ *   Join          a pad keypad (the PC keyboard types too) for a lobby's code; its second row, By Address, joins a
+ *                 lobby by its owner's address and port (Join by Address, without the matchmaking service). A
+ *                 spectator is a lobby's member in a spectator's place: there is no Watch of its own;
+ *   Profile       the name the others see.
+ * Everything the Dragon Net Battle window does is here; the window itself is only in F1 > Online > Advanced.
+ * Ranked Match, Friends, Tournament, Replays and Leaderboard need the matchmaking service to do more (player ids,
+ * ratings): they are listed, marked SOON, and say what they will be.
  * Once both players are there the session is the game's own versus mode (character select, the fight, results).
  */
 
@@ -32,7 +33,7 @@
 extern void PortTbo_TextMode(int on);
 extern int PortTbo_TextRead(void);
 extern void PortTbo_Copy(const char *text); /* onto the clipboard ("Copy Code") */
-extern void PortTbo_Paste(void);            /* the clipboard's room code, typed (Join Room's PASTE) */
+extern void PortTbo_Paste(void);            /* the clipboard's code, typed (Join's PASTE) */
 extern void PortTbo_PasteText(void);        /* the clipboard's plain characters, typed (Join by Address's PASTE) */
 
 /* The game's windows of every menu (battle/view_a_b.c, view_a_c.c), made from the Duel menu's data as
@@ -241,10 +242,6 @@ extern void Port_NetRulesSet(int type, int dp, int time);
 extern const char *Port_NetNameGet(void);
 extern void Port_NetNameSave(const char *name);
 extern int Port_LobbyStartCode(int host, const char *code);
-extern int Port_LobbyStart(int host, const char *address, int port); /* by address: the host on its port, or joining it */
-extern int Port_LobbySpectate(const char *address, int port);       /* watching the match hosted there */
-extern int Port_LobbySpectateCode(const char *code);                /* ... the match of a room code */
-extern int Port_LobbySpectateWaiting(void);                         /* ... the host is there and has no match yet */
 extern const char *Port_NetLanAddress(void);                        /* this PC's address on its own network, "" not known */
 extern void Port_SettingText(const char *name, const char *def, char *out, int size);
 extern void Port_SettingTextSave(const char *name, const char *value);
@@ -286,7 +283,7 @@ extern void Port_SettingsWrite(void);
 
 /* the screens */
 #define TB_HUB 0
-#define TB_CREATE 1
+#define TB_CREATE 1 /* New Lobby: Open Lobby (with a code) or Host by Address (on this PC's port) */
 #define TB_JOIN 2
 #define TB_WAIT 3
 #define TB_PROFILE 4
@@ -296,38 +293,31 @@ extern void Port_SettingsWrite(void);
 #define TB_BLOCK 8 /* "No Quick Match": this game's data is not the disc's (quick match only) */
 #define TB_LOBBY 9 /* a lobby of up to eight (port/src/gs/net_lobby.c): its places, its rules, its talk */
 #define TB_BRACKET 10 /* a lobby's tournament: its bracket */
-#define TB_ADDR 11 /* Join by Address: the host's address and port, typed on a keypad, then Join or Watch */
+#define TB_ADDR 11 /* Join by Address: a lobby owner's address and port, typed on a keypad, then Join */
 #define TB_FIGHTERS 161
 #define TB_TOURNAMENT_STAGE 4 /* the World Tournament Stage, at noon */
 
 /* the hub's modes, in the order of the list */
 #define HUB_QUICK 0
 #define HUB_RANKED 1
-#define HUB_CREATE 2
+#define HUB_LOBBY 2
 #define HUB_JOIN 3
-#define HUB_LOBBY 4
-#define HUB_FRIENDS 5
-#define HUB_TOURNAMENT 6
-#define HUB_REPLAYS 7
-#define HUB_LEADERBOARD 8
-#define HUB_PROFILE 9
-#define HUB_COUNT 10
+#define HUB_FRIENDS 4
+#define HUB_TOURNAMENT 5
+#define HUB_REPLAYS 6
+#define HUB_LEADERBOARD 7
+#define HUB_PROFILE 8
+#define HUB_COUNT 9
 
-/* Create Room's rows */
-#define CR_BATTLE 0
-#define CR_TIME 1
-#define CR_SPEED 2
-#define CR_DELAY 3
-#define CR_ROLL 4
-#define CR_OPEN 5
-#define CR_ADDR 6 /* Host by Address: the room on this PC's port (setting net_port), for a join by address */
-#define CR_COUNT 7
-#define CR_Y 96.0f   /* the first row's top */
-#define CR_STEP 31.0f /* from row to row */
+/* New Lobby's rows (the rules are the lobby page's: its owner sets them there) */
+#define CR_OPEN 0 /* Open Lobby: a code from the matchmaking service, for Join */
+#define CR_ADDR 1 /* Host by Address: the lobby on this PC's port (setting net_port), for Join by Address */
+#define CR_COUNT 2
+#define CR_Y 110.0f  /* the first row's top */
+#define CR_STEP 34.0f /* from row to row */
 
 /* Profile's rows */
-/* (the input delay and the rollback are the room's: Create Room sets them; a joiner gets the host's, a quick match
-   has its own) */
+/* (the input delay and the rollback are the lobby's: its owner sets them; a quick match has its own) */
 #define PR_NAME 0
 #define PR_COUNT 1
 
@@ -344,7 +334,7 @@ typedef struct TboScreen {
     s32 mode;
     s32 modeT;
     s32 leaving;
-    s32 train;          /* it is left for the Ultimate Training, the room still open */
+    s32 train;          /* it is left for the Ultimate Training, the search still on */
     s32 note;
     char noteLine[96];
     s32 say;            /* frames left of a longer line in the hosts' box (why a search failed: Tb_Say) */
@@ -352,7 +342,7 @@ typedef struct TboScreen {
     char sayLine[256];
     s32 hubCur;
     f32 hubY;           /* where the hub's cursor plate is drawn: it glides */
-    /* the host's choices (kept in the settings) */
+    /* the rules a new lobby begins with: the last ones its owner set on a lobby's page (kept in the settings) */
     s32 battle;         /* 0 one on one, 1 teams of up to five, 2..4 DP battle of 10 / 15 / 20 DP (the lobby's order) */
     s32 speed;          /* the game's speed in percent (setting net_speed_host, as the lobby's) */
     s32 port;           /* Host by Address's port (setting net_port) */
@@ -369,10 +359,8 @@ typedef struct TboScreen {
     /* Join by Address */
     char addr[ADDR_LEN + 1];
     s32 addrLen;
-    s32 byAddr;         /* the search is by address (no matchmaking service) */
-    s32 watch;          /* ... a spectator's: the match of that room or address is watched */
     /* the search */
-    s32 host;           /* this side opened the room (1), joins or watches it (0), a quick match (2) */
+    s32 host;           /* this side joins a lobby's code (0), a quick match (2) */
     s32 waitFrom;       /* frames when the search began */
     s32 found;          /* the other player is there: the match is starting */
     s32 launchIn;       /* ... in this many frames (the page says so first: the session holds the last picture shown) */
@@ -416,14 +404,12 @@ typedef struct TboScreen {
 } TboScreen;
 
 static TboScreen *sTb;
-static s32 sTbBgKind;  /* what the search left open for "Train While Waiting" is: 0 joining, 1 hosting, 2 a quick match */
+static PortLobbyView sTbLv; /* (the lobby's page: what it shows this frame) */
+static s32 sTbBgKind;  /* what the search left open for "Train While Waiting" is: 0 joining a code, 2 a quick match */
 static s32 sTbBgQueue;
 static s32 sTbBgFrames; /* how long it had been searching when the sparring fight began; the sign counts on from it */
 s32 gPortTboSpar;       /* the battle that runs is Train While Waiting's sparring fight (its sign, its pause menu) */
 static char sTbBgCode[CODE_LEN + 1];
-static s32 sTbBgByAddr; /* ... by address: the address joined (sTbBgAddr) or the port hosted on */
-static s32 sTbBgPort;
-static char sTbBgAddr[ADDR_LEN + 1];
 static f32 Tb_Beat(s32 period);
 /* A format with a number in it ("%d FRAME") in the chosen language, for sprintf (the translation file's line keeps
    its %d slots, or it is not used: port/src/gs/menu_translation.c). */
@@ -436,14 +422,13 @@ static char *Tb_Fmt(char *format) {
     return Port_TrLine(format, buf[k], 160) ? buf[k] : format;
 }
 
-static char *sTbHubName[HUB_COUNT] = {"Quick Match", "Ranked Match", "Create Room", "Join Room", "Lobby", "Friends", "Tournament", "Replays", "Leaderboard", "Profile"};
-static const s32 sTbHubReady[HUB_COUNT] = {1, 0, 1, 1, 1, 0, 0, 0, 0, 1};
+static char *sTbHubName[HUB_COUNT] = {"Quick Match", "Ranked Match", "Lobby", "Join", "Friends", "Tournament", "Replays", "Leaderboard", "Profile"};
+static const s32 sTbHubReady[HUB_COUNT] = {1, 0, 1, 1, 0, 0, 0, 0, 1};
 static char *sTbHubSay[HUB_COUNT] = {
     "Fight whoever is searching right now! No time limit, and you can train while you wait.",
     "Fights that move your rank, season by season. That one is coming soon!",
-    "Open a room with your own rules, then give your rival its code. No port forwarding needed! Or host by address.",
-    "Got a room code? Type it in to join the room or watch its match! By Address joins a host's address instead.",
-    "A lobby for up to eight: two fight, six watch. You pick who plays and the rules; the others join with its code.",
+    "A lobby for your friends: up to eight, your rules, rematches, spectators and tournaments!",
+    "Got a lobby's code? Type it in to join, to play or to watch! By Address joins by the owner's address.",
     "Your rivals, who is online, and invites. That one is coming soon!",
     "The Tenkaichi Budokai itself: brackets of 4 to 16 players. That one is coming soon!",
     "Your last matches, saved to watch again. That one is coming soon!",
@@ -451,7 +436,7 @@ static char *sTbHubSay[HUB_COUNT] = {
     "The name your rivals see.",
 };
 static void Tb_LobbyOpen(void);
-static void Tb_LobbyCreate(void);
+static void Tb_LobbyCreate(s32 byCode);
 /* Quick Match's Region: what the player chooses, and what the matchmaking service is told (port/matchmaking/worker.js:
    Auto takes the nearest first and everyone after 25 seconds; a region players placed in it first and everyone
    after 40; Anywhere whoever waits longest). */
@@ -563,20 +548,10 @@ static void Tb_DelayText(char *out, s32 delay) {
     }
 }
 
-static void Tb_RollText(char *out, s32 roll) {
-    if (!Port_RollCan()) {
-        sprintf(out, "NOT ON THIS PC");
-    } else if (roll <= 0) {
-        sprintf(out, "OFF");
-    } else {
-        sprintf(out, Tb_Fmt("UP TO %d FRAMES"), (int)roll);
-    }
-}
-
 /* ---------------------------------------------------------------------------------------------- the rule */
 /* Whose data may meet online (gs/net.c, which enforces it for every way in; docs/port/README.md, "Online: whose data
-   may meet"): a quick match is with strangers and needs the original disc's data; with friends (Create Room, Join
-   Room, a lobby) both games need the same data, modified or not, which the two compare when they connect. Fighter
+   may meet"): a quick match is with strangers and needs the original disc's data; with friends (a lobby, by its
+   code or its owner's address) both games need the same data, modified or not, which the two compare when they connect. Fighter
    mods are switched off by themselves while a session runs (plat_mods.c); what is checked is the rest of the data the
    game computes with (the gameplay fingerprint, plat_fprint.c: files added under gamedata/mods count). No game goes
    online before its own fingerprint is known, nor while an update is under way (port/src/gs/net_update.c). Returns 1
@@ -614,19 +589,9 @@ static void Tb_BlockUpdate(s32 live) {
 }
 
 /* ---------------------------------------------------------------------------------------------- the search */
-/* The host's choices into the connection (Create Room's rows; they travel to the one who joins with the answer). */
-static void Tb_HostRules(void) {
-    Port_NetOptions(sTb->roll, sTb->delay < 0 ? -2 : sTb->delay);
-    Port_NetSpeedSet(sTb->speed); /* (before the rules: their word carries the speed) */
-    Port_NetRulesSet(sTb->battle <= 1 ? sTb->battle : 2, sTb->battle >= 2 ? sTb->battle - 2 : 0, sTb->time);
-    Tb_SaveChoices();
-}
-
 /* The waiting page, for whatever was begun. */
-static void Tb_Searching(s32 host, s32 byAddr, s32 watch) {
+static void Tb_Searching(s32 host) {
     sTb->host = host;
-    sTb->byAddr = byAddr;
-    sTb->watch = watch;
     sTb->waitFrom = sTb->frames;
     sTb->found = 0;
     sTb->say = 0;
@@ -634,24 +599,23 @@ static void Tb_Searching(s32 host, s32 byAddr, s32 watch) {
     Tb_SetMode(TB_WAIT);
 }
 
-static void Tb_BeginSearch(s32 host) {
+/* Join: the code typed is looked up at the matchmaking service. A lobby's (every code since 0.1.39) makes this game
+   its member (Port_LobbyPoll's 5: the lobby's page); a code of a game of two from a release before is refused by
+   the service as another version. */
+static void Tb_BeginSearch(void) {
     s32 state;
 
     if (!Tb_Vanilla(0)) {
         return;
     }
-    if (host) {
-        Tb_HostRules();
-    } else {
-        Port_NetOptions(-1, -1); /* joining: the host's choices arrive with its answer */
-    }
+    Port_NetOptions(-1, -1); /* (a match of two would take the host's choices from its answer) */
     Port_NetNameGet(); /* (the saved name is the one sent) */
-    state = Port_LobbyStartCode(host, host ? "" : sTb->code);
+    state = Port_LobbyStartCode(0, sTb->code);
     if (state < 0) {
         Tb_Note("THE NETWORK COULD NOT BE OPENED ON THIS PC");
         return;
     }
-    Tb_Searching(host, 0, 0);
+    Tb_Searching(0);
 }
 
 /* Join by Address's text: the address, and the port after its last colon (ADDR_PORT when none is typed). 0, with a
@@ -687,7 +651,7 @@ static s32 Tb_AddrSplit(char *where, s32 *port) {
     }
     if (where[0] == 0) {
         Snd_PlaySe(1, 2);
-        Tb_Note("TYPE THE HOST'S ADDRESS FIRST, AS 192.168.1.20 OR 192.168.1.20:7000");
+        Tb_Note("TYPE THE OWNER'S ADDRESS FIRST, AS 192.168.1.20 OR 192.168.1.20:7000");
         return 0;
     }
     Port_SettingTextSave("net_join_addr", sTb->addr); /* (offered again next time) */
@@ -695,61 +659,23 @@ static s32 Tb_AddrSplit(char *where, s32 *port) {
     return 1;
 }
 
-/* By address, without the matchmaking service (as the Dragon Net Battle window does it): host on this PC's port
-   (Create Room's Host by Address), or join the address typed on Join by Address. */
-static void Tb_BeginAddr(s32 host) {
-    static char where[ADDR_LEN + 1]; /* (static: handed to the network's side) */
-    s32 port = sTb->port;
-    s32 state;
-
-    if (!Tb_Vanilla(0)) {
-        return;
-    }
-    if (!host && !Tb_AddrSplit(where, &port)) {
-        return;
-    }
-    if (host) {
-        Tb_HostRules();
-    } else {
-        Port_NetOptions(-1, -1);
-    }
-    Port_NetNameGet();
-    if (host) {
-        where[0] = 0;
-    }
-    state = Port_LobbyStart(host, where, port);
-    if (state < 0) {
-        Port_LobbyCancel();
-        Snd_PlaySe(1, 2);
-        Tb_Note(host ? "THAT PORT CANNOT BE USED: DOES ANOTHER PROGRAM HAVE IT?" : "THAT ADDRESS IS NOT KNOWN");
-        return;
-    }
-    Tb_Searching(host, 1, 0);
-}
-
-/* Watch: the match of the room code typed on Join Room, or of the address typed on Join by Address (a spectator:
-   gs/net.c, "Spectators"). A lobby's code or its owner's address is answered as a join: this game becomes the
-   lobby's member, and watches its matches from there unless the owner puts it in 1P or 2P. */
-static void Tb_BeginWatch(s32 byAddr) {
+/* Join by Address: the lobby whose owner hosts on that address and port (New Lobby's Host by Address there), without
+   the matchmaking service (Port_LobbyJoin). Its page opens at once: "Joining the Lobby" until the owner answers. A
+   game of another release says so (net_lobby.c: the owner's refusal; a 0.1.38 game of two answers a spectator's
+   question, which says it). */
+static void Tb_AddrJoin(void) {
     static char where[ADDR_LEN + 1]; /* (static: handed to the network's side) */
     s32 port;
-    s32 state;
 
-    if (!Tb_Vanilla(0)) {
+    if (!Tb_Vanilla(0) || !Tb_AddrSplit(where, &port)) {
         return;
     }
-    if (byAddr && !Tb_AddrSplit(where, &port)) {
-        return;
-    }
-    Port_NetNameGet();
-    state = byAddr ? Port_LobbySpectate(where, port) : Port_LobbySpectateCode(sTb->code);
-    if (state < 0) {
-        Port_LobbyCancel();
-        Snd_PlaySe(1, 2);
-        Tb_Note(byAddr ? "THAT ADDRESS IS NOT KNOWN" : "THE NETWORK COULD NOT BE OPENED ON THIS PC");
-        return;
-    }
-    Tb_Searching(0, byAddr, 1);
+    Snd_PlaySe(1, 1);
+    Port_LobbyCancel();
+    Port_NetNameSet(Port_NetNameGet());
+    Port_LobbyJoin(where, port);
+    Port_LobbyView(&sTbLv);
+    Tb_LobbyOpen();
 }
 
 /* What the search says (each frame on the screens that wait): the rival came (the match starts), or it failed.
@@ -783,25 +709,20 @@ static s32 Tb_SearchNews(void) {
         return 1;
     }
     if (state == 5 && !sTb->found) { /* the code was a lobby's: this game is its member now (gs/net_lobby.c) */
-        s32 watched = sTb->watch;
-
         Snd_PlaySe(1, 1);
         Tb_LobbyOpen();
-        if (watched) { /* (Watch with a lobby's code or address: its owner chooses who plays, the others watch) */
-            Tb_Say("That is a lobby: you joined it. Its owner chooses who plays; everyone else watches the matches from here.");
-        }
         return 1;
     }
     if (state <= 0 && !sTb->found) {
         if (state == -3) {
             Tb_Say(Port_LobbyError()); /* (in the box: the network's reasons are long; whole lines of the catalog, sTbNetLines) */
-            Tb_Note(sTb->watch ? "YOU CANNOT WATCH THIS MATCH" : "THE CONNECTION WAS REFUSED");
+            Tb_Note("THE CONNECTION WAS REFUSED");
         } else if (state == -4) {
             Tb_Note("THE TWO GAMES COULD NOT REACH EACH OTHER, EVEN THROUGH THE RELAY");
         } else if (state == -2) {
-            Tb_Note("THE HOST'S GAME IS ANOTHER VERSION: BOTH NEED THE SAME RELEASE");
+            Tb_Note("THE OTHER GAME IS ANOTHER VERSION: BOTH NEED THE SAME RELEASE");
         } else if (state < 0) {
-            Tb_Note(sTb->byAddr && sTb->host ? "THAT PORT CANNOT BE USED: DOES ANOTHER PROGRAM HAVE IT?" : "THE ROOM COULD NOT BE OPENED");
+            Tb_Note("THE SEARCH COULD NOT BE STARTED");
         }
         Port_LobbyCancel();
         Tb_SetMode(sTb->waitBack == TB_WAIT || sTb->waitBack == TB_SPAR ? TB_HUB : sTb->waitBack);
@@ -810,33 +731,28 @@ static s32 Tb_SearchNews(void) {
     return sTb->found;
 }
 
-/* Host by Address: what the others type (this PC's address on its network and the port), "" while not known. */
-static char *Tb_HostAddr(void) {
+/* Host by Address: what the others type (this PC's address on its network and the lobby's port), "" while not
+   known. */
+static char *Tb_HostAddr(s32 port) {
     static char text[64];
     const char *lan = Port_NetLanAddress();
 
-    char port[16];
+    char num[16];
 
     text[0] = 0;
     if (lan[0] != 0) { /* (no %s of the network's text through sprintf: the 32-bit pointers) */
-        sprintf(port, ":%d", (int)sTb->port);
+        sprintf(num, ":%d", (int)port);
         Ps_Copy(text, lan, 48);
-        Ps_Cat(text, port, 64);
+        Ps_Cat(text, num, 64);
     }
     return text;
 }
 
 static void Tb_WaitUpdate(s32 live) {
     Pad *pad = &gPad[0];
-    s32 copy = sTb->host == 1 && (sTb->byAddr ? Tb_HostAddr()[0] != 0 : Port_LobbyCode()[0] != 0);
 
     if (!sTb->found) {
-        if (copy) {
-            Ps_Prompt(0, sTb->byAddr ? "Copy Address" : "Copy Code");
-        }
-        if (!sTb->watch) { /* (a spectator has no sparring fight: the match it waits for is someone else's) */
-            Ps_Prompt(1, "Train While Waiting");
-        }
+        Ps_Prompt(1, "Train While Waiting");
         Ps_Prompt(4, "Cancel");
     }
     if (Tb_SearchNews()) {
@@ -845,15 +761,7 @@ static void Tb_WaitUpdate(s32 live) {
     if (!live || sTb->found) {
         return;
     }
-    if ((pad->gamePressed & PADG_CROSS) && copy) { /* the code (or the address), to paste to the rival */
-        if (sTb->byAddr) {
-            PortTbo_Copy(Tb_HostAddr());
-        } else {
-            PortTbo_Copy(Port_LobbyCode());
-        }
-        Snd_PlaySe(1, 1);
-        Tb_Note(sTb->byAddr ? "COPIED: PASTE THE ADDRESS TO YOUR RIVAL" : "COPIED: PASTE THE CODE TO YOUR RIVAL");
-    } else if ((pad->gamePressed & PADG_SQUARE) && !sTb->watch) { /* the fighters of the sparring fight first; the search goes on */
+    if (pad->gamePressed & PADG_SQUARE) { /* the fighters of the sparring fight first; the search goes on */
         Snd_PlaySe(1, 1);
         sTb->spCur = 2;
         Tb_SetMode(TB_SPAR);
@@ -924,9 +832,6 @@ static void Tb_SparUpdate(s32 live) {
             sTbBgQueue = sTb->queue;
             sTbBgFrames = sTb->frames - sTb->waitFrom;
             Ps_Copy(sTbBgCode, sTb->code, CODE_LEN + 1);
-            sTbBgByAddr = sTb->byAddr;
-            sTbBgPort = sTb->port;
-            Ps_Copy(sTbBgAddr, sTb->addr, ADDR_LEN + 1);
             sTb->train = 1;
             sTb->leaving = 1;
             ColorFade_StartOut(0, 0, 0, 0x14);
@@ -1027,7 +932,7 @@ static void Tb_HubUpdate(s32 live) {
             sTb->asked = sTb->frames - 100000;
             Tb_SetMode(TB_QUICK);
             break;
-        case HUB_CREATE:
+        case HUB_LOBBY:
             Snd_PlaySe(1, 1);
             sTb->crCur = CR_OPEN;
             Tb_SetMode(TB_CREATE);
@@ -1040,9 +945,6 @@ static void Tb_HubUpdate(s32 live) {
             sTb->keyRow = 0;
             Tb_SetMode(TB_JOIN);
             break;
-        case HUB_LOBBY:
-            Tb_LobbyCreate();
-            break;
         case HUB_PROFILE:
             Snd_PlaySe(1, 1);
             sTb->prCur = 0;
@@ -1050,7 +952,7 @@ static void Tb_HubUpdate(s32 live) {
             break;
         default:
             Snd_PlaySe(1, 2);
-            Tb_Note("NOT OPEN YET: IT NEEDS MORE FROM THE MATCHMAKING SERVICE THAN ROOM CODES");
+            Tb_Note("NOT OPEN YET: IT NEEDS MORE FROM THE MATCHMAKING SERVICE");
             break;
         }
     } else if (pad->gamePressed & PADG_TRIANGLE) {
@@ -1060,16 +962,16 @@ static void Tb_HubUpdate(s32 live) {
     }
 }
 
-/* ---------------------------------------------------------------------------------------------- Create Room */
-/* Game Speed's steps (the lobby's, gs/net_lobby.c). */
-static const s32 sTbSpeeds[9] = {100, 105, 110, 114, 120, 125, 130, 140, 150};
-
+/* ---------------------------------------------------------------------------------------------- New Lobby */
+/* Two ways to open a lobby: Open Lobby (a code from the matchmaking service, for the others' Join) and Host by
+   Address (on this PC's port, for their Join by Address). Its rules are set on its page; it begins with the last
+   ones its owner set there. */
 static void Tb_CreateUpdate(s32 live) {
     Pad *pad = &gPad[0];
     s32 side;
 
     Ps_Prompt(3, "Change");
-    Ps_Prompt(0, sTb->crCur == CR_OPEN ? "Open Room" : sTb->crCur == CR_ADDR ? "Host by Address" : "Next");
+    Ps_Prompt(0, sTb->crCur == CR_OPEN ? "Open Lobby" : "Host by Address");
     Ps_Prompt(2, "Back");
     if (!live) {
         return;
@@ -1079,49 +981,12 @@ static void Tb_CreateUpdate(s32 live) {
     if (sTb->crCur == CR_ADDR && (pad->gameRepeat & (PADG_R1 | PADG_L1))) { /* the port in hundreds */
         side = (pad->gameRepeat & PADG_R1) ? 100 : -100;
     }
-    if (side != 0) {
-        switch (sTb->crCur) {
-        case CR_BATTLE:
-            sTb->battle = Ps_Wrap(sTb->battle + side, 0, 4);
-            break;
-        case CR_TIME:
-            sTb->time = Ps_Wrap(sTb->time + side, 0, 4);
-            break;
-        case CR_SPEED: {
-            s32 i;
-
-            for (i = 0; i < 8 && sTbSpeeds[i] < sTb->speed; i++) {
-            }
-            sTb->speed = sTbSpeeds[Ps_Wrap(i + side, 0, 8)];
-            break;
-        }
-        case CR_DELAY:
-            sTb->delay = Ps_Wrap(sTb->delay + side, -1, 6);
-            break;
-        case CR_ROLL:
-            if (Port_RollCan()) {
-                sTb->roll = Ps_Wrap(sTb->roll + side * 2, 0, 8);
-            }
-            break;
-        case CR_ADDR:
-            sTb->port = Ps_Wrap(sTb->port + side, 1024, 65535);
-            break;
-        }
-        if (sTb->crCur != CR_OPEN) {
-            Snd_PlaySe(1, 0);
-        }
+    if (side != 0 && sTb->crCur == CR_ADDR) {
+        sTb->port = Ps_Wrap(sTb->port + side, 1024, 65535);
+        Snd_PlaySe(1, 0);
     }
     if (pad->gamePressed & (PADG_CROSS | PADG_START)) {
-        if (sTb->crCur == CR_ADDR) {
-            Snd_PlaySe(1, 1);
-            Tb_BeginAddr(1);
-        } else if (sTb->crCur == CR_OPEN || (pad->gamePressed & PADG_START)) {
-            Snd_PlaySe(1, 1);
-            Tb_BeginSearch(1);
-        } else {
-            Snd_PlaySe(1, 0);
-            sTb->crCur++;
-        }
+        Tb_LobbyCreate(sTb->crCur == CR_OPEN);
     } else if (pad->gamePressed & PADG_TRIANGLE) {
         Snd_PlaySe(1, 2);
         Tb_SaveChoices();
@@ -1145,15 +1010,14 @@ typedef struct TbKeyBtn {
 #define TB_KEY_CASE 3
 #define TB_KEY_SPACE 4
 #define TB_KEY_PASTE 5
-#define TB_KEY_WATCH 6
 #define TB_KEY_ADDR 7
 
 #define JOIN_BTN_OK 2 /* (sTbJoinBtn's JOIN: where the cursor goes once the code is full) */
-static const TbKeyBtn sTbJoinBtn[5] = {{"DELETE", 0, 2, TB_KEY_DELETE, 0}, {"PASTE", 3, 5, TB_KEY_PASTE, 0}, {"JOIN", 6, 8, TB_KEY_OK, 0},
-                                       {"BY ADDRESS", 0, 5, TB_KEY_ADDR, 1}, {"WATCH", 6, 8, TB_KEY_WATCH, 1}};
+static const TbKeyBtn sTbJoinBtn[4] = {{"DELETE", 0, 2, TB_KEY_DELETE, 0}, {"PASTE", 3, 5, TB_KEY_PASTE, 0}, {"JOIN", 6, 8, TB_KEY_OK, 0},
+                                       {"BY ADDRESS", 0, 8, TB_KEY_ADDR, 1}};
 static const TbKeyBtn sTbNameBtn[4] = {{"Aa", 0, 1, TB_KEY_CASE}, {"SPACE", 2, 4, TB_KEY_SPACE}, {"DELETE", 5, 6, TB_KEY_DELETE}, {"DONE", 7, 8, TB_KEY_OK}};
-#define ADDR_BTN_OK 3
-static const TbKeyBtn sTbAddrBtn[4] = {{"DELETE", 0, 1, TB_KEY_DELETE}, {"PASTE", 2, 3, TB_KEY_PASTE}, {"WATCH", 4, 5, TB_KEY_WATCH}, {"JOIN", 6, 8, TB_KEY_OK}};
+#define ADDR_BTN_OK 2
+static const TbKeyBtn sTbAddrBtn[3] = {{"DELETE", 0, 2, TB_KEY_DELETE}, {"PASTE", 3, 5, TB_KEY_PASTE}, {"JOIN", 6, 8, TB_KEY_OK}};
 #define NAME_ROWS 5
 static char sTbNameKeys[2][NAME_ROWS][KEY_COLS + 1] = {{"ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ0", "123456789", "-_.!?#&*+"},
                                                      {"abcdefghi", "jklmnopqr", "stuvwxyz0", "123456789", "-_.!?#&*+"}};
@@ -1292,7 +1156,7 @@ static void Tb_Keypad(f32 x, f32 y, s32 rows, char (*keys)[KEY_COLS + 1], const 
     }
 }
 
-/* ---------------------------------------------------------------------------------------------- Join Room */
+/* ---------------------------------------------------------------------------------------------- Join */
 static void Tb_CodeAdd(s32 c) {
     if (c >= 'a' && c <= 'z') {
         c -= 'a' - 'A';
@@ -1311,17 +1175,13 @@ static void Tb_CodeBack(void) {
     }
 }
 
-static void Tb_JoinTry(s32 watch) {
+static void Tb_JoinTry(void) {
     if (sTb->codeLen == CODE_LEN) {
         Snd_PlaySe(1, 1);
-        if (watch) {
-            Tb_BeginWatch(0);
-        } else {
-            Tb_BeginSearch(0);
-        }
+        Tb_BeginSearch();
     } else {
         Snd_PlaySe(1, 2);
-        Tb_Note("A ROOM CODE HAS SIX LETTERS AND NUMBERS");
+        Tb_Note("A LOBBY'S CODE HAS SIX LETTERS AND NUMBERS");
     }
 }
 
@@ -1348,7 +1208,7 @@ static void Tb_JoinUpdate(s32 live) {
     }
     while (sTb->typing && (c = Port_TextRead()) != 0) { /* the PC keyboard: letters, backspace, enter, escape */
         if (c == 13) {
-            Tb_JoinTry(0);
+            Tb_JoinTry();
             return;
         } else if (c == 27) { /* Esc: back, as triangle */
             Snd_PlaySe(1, 2);
@@ -1364,7 +1224,7 @@ static void Tb_JoinUpdate(s32 live) {
             }
         }
     }
-    c = Tb_PadUpdate(KEY_ROWS, sTbKeys, sTbJoinBtn, 5);
+    c = Tb_PadUpdate(KEY_ROWS, sTbKeys, sTbJoinBtn, 4);
     if (c > 0) {
         Tb_CodeAdd(c);
         if (sTb->codeLen == CODE_LEN) { /* full: the cursor goes to JOIN */
@@ -1378,12 +1238,10 @@ static void Tb_JoinUpdate(s32 live) {
         PortTbo_Paste();
     } else if (c == -TB_KEY_DELETE) {
         Tb_CodeBack();
-    } else if (c == -TB_KEY_WATCH) {
-        Tb_JoinTry(1);
     } else if (c == -TB_KEY_ADDR) {
         Tb_AddrOpen();
     } else if (c == -TB_KEY_OK || (pad->gamePressed & PADG_START)) {
-        Tb_JoinTry(0);
+        Tb_JoinTry();
     } else if (pad->gamePressed & PADG_SQUARE) {
         Tb_CodeBack();
     } else if (pad->gamePressed & PADG_TRIANGLE) {
@@ -1393,9 +1251,8 @@ static void Tb_JoinUpdate(s32 live) {
 }
 
 /* ---------------------------------------------------------------------------------------------- Join by Address */
-/* The host's address and port, as Dragon Net Battle's Join tab took them: typed on the keypad (or the PC keyboard,
-   or pasted), then JOIN (Port_LobbyStart) or WATCH (Port_LobbySpectate). The host opens with Create Room's Host by
-   Address, or any game that hosts on a port. */
+/* The lobby owner's address and port, as Dragon Net Battle's Join tab took them: typed on the keypad (or the PC
+   keyboard, or pasted), then JOIN (Tb_AddrJoin). The owner opens it with New Lobby's Host by Address. */
 static void Tb_AddrAdd(s32 c) {
     if (c >= 'A' && c <= 'Z') {
         c += 'a' - 'A';
@@ -1426,8 +1283,7 @@ static void Tb_AddrUpdate(s32 live) {
     }
     while (sTb->typing && (c = Port_TextRead()) != 0) { /* the PC keyboard: an address, backspace, enter, escape */
         if (c == 13) {
-            Snd_PlaySe(1, 1);
-            Tb_BeginAddr(0);
+            Tb_AddrJoin();
             return;
         } else if (c == 27) {
             Snd_PlaySe(1, 2);
@@ -1439,7 +1295,7 @@ static void Tb_AddrUpdate(s32 live) {
             Tb_AddrAdd(c);
         }
     }
-    c = Tb_PadUpdate(ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 4);
+    c = Tb_PadUpdate(ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 3);
     if (c > 0) {
         Tb_AddrAdd(c);
     } else if (c == -TB_KEY_PASTE) { /* the copied address in place of what is typed (it comes with the next frames) */
@@ -1449,12 +1305,8 @@ static void Tb_AddrUpdate(s32 live) {
         PortTbo_PasteText();
     } else if (c == -TB_KEY_DELETE) {
         Tb_AddrBack();
-    } else if (c == -TB_KEY_WATCH) {
-        Snd_PlaySe(1, 1);
-        Tb_BeginWatch(1);
     } else if (c == -TB_KEY_OK || (pad->gamePressed & PADG_START)) {
-        Snd_PlaySe(1, 1);
-        Tb_BeginAddr(0);
+        Tb_AddrJoin();
     } else if (pad->gamePressed & PADG_SQUARE) {
         Tb_AddrBack();
     } else if (pad->gamePressed & PADG_TRIANGLE) {
@@ -1705,7 +1557,7 @@ static void Tb_DrawHubText(void) {
     }
 }
 
-/* rows of label / value, as Create Room and Profile have them, `step` apart */
+/* rows of label / value, as New Lobby and Profile have them, `step` apart */
 static void Tb_DrawRowsAt(s32 count, s32 cur, f32 y0, f32 step) {
     s32 i;
 
@@ -1731,31 +1583,15 @@ static void Tb_DrawCreate(void) {
     Tb_DrawRowsAt(CR_COUNT, sTb->crCur, CR_Y, CR_STEP);
 }
 
-static char *sTbCreateLabel[CR_COUNT] = {"Battle", "Time Limit", "Game Speed", "Input Delay", "Rollback", "Open Room", "Host by Address"};
-static char *sTbCreateBattle[5] = {"ONE ON ONE", "TEAMS (UP TO 5)", "DP BATTLE: 10 DP", "DP BATTLE: 15 DP", "DP BATTLE: 20 DP"};
+static char *sTbCreateLabel[CR_COUNT] = {"Open Lobby", "Host by Address"};
 
-/* The value of Create Room's row i ("" none). */
+/* The value of New Lobby's row i ("" none). */
 static void Tb_CreateValue(char *out, s32 i) {
     out[0] = 0;
-    switch (i) {
-    case CR_BATTLE:
-        Ps_Copy(out, sTbCreateBattle[sTb->battle % 5], 32);
-        break;
-    case CR_TIME:
-        Ps_Copy(out, sTbTime[sTb->time], 32);
-        break;
-    case CR_SPEED:
-        sprintf(out, sTb->speed == Port_NetSpeedStandard() ? Tb_Fmt("%d%% (STANDARD)") : Tb_Fmt("%d%%"), (int)sTb->speed);
-        break;
-    case CR_DELAY:
-        Tb_DelayText(out, sTb->delay);
-        break;
-    case CR_ROLL:
-        Tb_RollText(out, sTb->roll);
-        break;
-    case CR_ADDR:
+    if (i == CR_ADDR) {
         sprintf(out, Tb_Fmt("PORT %d"), (int)sTb->port);
-        break;
+    } else {
+        Ps_Copy(out, "WITH A CODE", 32);
     }
 }
 
@@ -1768,14 +1604,14 @@ static void Tb_DrawCreateText(void) {
         Tb_CreateValue(value[i], i);
     }
     Ps_Align(1);
-    Ps_Text(157.0f, Ps_TextTop(CR_Y - 20.0f, 0.56f), "ROOM SETTINGS", 0.56f, 0.0f, 2);
+    Ps_Text(157.0f, Ps_TextTop(CR_Y - 20.0f, 0.56f), "A NEW LOBBY", 0.56f, 0.0f, 2);
     Ps_Align(0);
     for (i = 0; i < CR_COUNT; i++) {
         f32 y = CR_Y + CR_STEP * (f32)i;
 
-        Ps_Text(36.0f, Ps_TextTop(y + 13.0f, 0.66f), label[i], 0.66f, 120.0f, i == sTb->crCur ? 1 : 0);
+        Ps_Text(36.0f, Ps_TextTop(y + 13.0f, 0.66f), label[i], 0.66f, 130.0f, i == sTb->crCur ? 1 : 0);
         Ps_Align(2);
-        Ps_Text(266.0f, Ps_TextTop(y + 13.0f, 0.54f), value[i], 0.54f, 130.0f, 3);
+        Ps_Text(266.0f, Ps_TextTop(y + 13.0f, 0.54f), value[i], 0.54f, 110.0f, 3);
         Ps_Align(0);
     }
 }
@@ -1804,7 +1640,7 @@ static void Tb_DrawJoinText(void) {
         Ps_Text(x, Ps_TextTop(86.0f, 1.0f), one, 1.0f, 0.0f, c < sTb->codeLen ? 3 : 0); /* (what is typed: a value) */
     }
     Ps_Align(0);
-    Tb_Keypad(24.0f, 122.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 5, 32.0f);
+    Tb_Keypad(24.0f, 122.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 4, 32.0f);
 }
 
 /* Join by Address: the line typed, the hint under it, the keypad. */
@@ -1820,12 +1656,12 @@ static void Tb_DrawAddrText(void) {
     Ps_Copy(line, sTb->addr, ADDR_LEN + 2);
     Ps_Cat(line, (sTb->frames / 16) & 1 ? "_" : " ", ADDR_LEN + 2);
     if (sTb->addrLen == 0 && (sTb->frames / 16) & 1) {
-        Ps_Text(38.0f, Ps_TextTop(82.0f, 0.5f), "THE HOST'S ADDRESS:PORT", 0.5f, 290.0f, 4);
+        Ps_Text(38.0f, Ps_TextTop(82.0f, 0.5f), "THE OWNER'S ADDRESS:PORT", 0.5f, 290.0f, 4);
     } else {
         Ps_Text(38.0f, Ps_TextTop(82.0f, 0.78f), line, 0.78f, 290.0f, 3);
     }
     Ps_Text(26.0f, Ps_TextTop(104.0f, 0.4f), "NO :PORT TYPED: PORT 7000", 0.4f, 300.0f, 0);
-    Tb_Keypad(24.0f, 122.0f, ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 4, 31.0f);
+    Tb_Keypad(24.0f, 122.0f, ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 3, 31.0f);
 }
 
 static void Tb_DrawWait(void) {
@@ -1852,8 +1688,6 @@ static void Tb_Upper(char *out, const char *text, s32 size) {
 static void Tb_DrawWaitText(void) {
     static char line[96], region[64];
     s32 secs = (sTb->frames - sTb->waitFrom) / 60;
-    const char *code = Port_LobbyCode();
-
     if (sTb->host == 2) {
         s32 n = Port_LobbyQueueWaiting(sTb->queue);
 
@@ -1891,74 +1725,17 @@ static void Tb_DrawWaitText(void) {
             sprintf(line, Tb_Fmt("%d IN THIS QUEUE"), (int)n);
             Ps_Text(22.0f, (f32)y, line, 0.42f, 150.0f, 5);
         }
-    } else if (sTb->watch) { /* a spectator: the room's code or the host's address */
-        Ps_Text(22.0f, 94.0f, "WATCHING", 0.56f, 0.0f, 0);
-        Ps_Align(1);
-        if (sTb->byAddr) {
-            Ps_Text(95.0f, 126.0f, sTb->addr, 0.6f, 156.0f, 0);
-        } else {
-            Ps_Text(95.0f, 120.0f, sTb->code, 1.2f, 156.0f, 0);
-        }
-        Ps_Align(0);
-        if (Port_LobbySpectateWaiting()) {
-            Ps_Text(22.0f, 172.0f, "THE MATCH HAS NOT", 0.46f, 150.0f, 0);
-            Ps_Text(22.0f, 190.0f, "BEGUN YET", 0.46f, 150.0f, 0);
-            Ps_Text(22.0f, 214.0f, "YOU WATCH IT WHEN IT DOES", 0.4f, 150.0f, 3);
-        } else {
-            Ps_Text(22.0f, 172.0f, "ASKING THE HOST", 0.46f, 150.0f, 0);
-            Ps_Text(22.0f, 190.0f, "TO LET YOU WATCH...", 0.46f, 150.0f, 0);
-        }
-    } else if (sTb->host && sTb->byAddr) { /* Host by Address: what the others type */
-        const char *lan = Port_NetLanAddress();
-
-        Ps_Text(22.0f, 94.0f, "HOSTING ON PORT", 0.56f, 0.0f, 0);
-        sprintf(line, "%d", (int)sTb->port);
-        Ps_Align(1);
-        Ps_Text(95.0f, 116.0f, line, 1.2f, 156.0f, 0);
-        Ps_Align(0);
-        Ps_Text(22.0f, 166.0f, "ON YOUR NETWORK:", 0.42f, 150.0f, 0);
-        if (lan[0] != 0) { /* (not `?:` between the network's text and a literal: the 32-bit pointers) */
-            Ps_Text(22.0f, 182.0f, (char *)lan, 0.46f, 150.0f, 5);
-        } else {
-            Ps_Text(22.0f, 182.0f, "-", 0.46f, 150.0f, 5);
-        }
-        Ps_Text(22.0f, 204.0f, "OVER THE INTERNET: YOUR", 0.4f, 150.0f, 0);
-        Ps_Text(22.0f, 219.0f, "PUBLIC ADDRESS, PORT OPEN", 0.4f, 150.0f, 0);
-        if (Port_LobbyOther()) {
-            Ps_Text(22.0f, 234.0f, "ANOTHER VERSION TRIED", 0.4f, 150.0f, 3);
-        }
-    } else if (sTb->host) {
-        Ps_Text(22.0f, 94.0f, "ROOM CODE", 0.56f, 0.0f, 0);
-        Ps_Align(1);
-        if (code[0] != 0) {
-            Ps_Text(95.0f, 120.0f, (char *)code, 1.2f, 156.0f, 0);
-        } else {
-            Ps_Text(95.0f, 130.0f, "GETTING A CODE...", 0.5f, 156.0f, 0);
-        }
-        Ps_Align(0);
-        Ps_Text(22.0f, 172.0f, code[0] != 0 ? "GIVE THIS CODE TO" : "ASKING THE", 0.46f, 150.0f, 0);
-        Ps_Text(22.0f, 190.0f, code[0] != 0 ? "YOUR RIVAL" : "MATCHMAKING SERVICE", 0.46f, 150.0f, 0);
-        if (Port_LobbyOther()) {
-            Ps_Text(22.0f, 214.0f, "ANOTHER VERSION TRIED", 0.42f, 150.0f, 3);
-        }
-    } else if (sTb->byAddr) {
-        Ps_Text(22.0f, 94.0f, "JOINING", 0.56f, 0.0f, 0);
-        Ps_Align(1);
-        Ps_Text(95.0f, 126.0f, sTb->addr, 0.6f, 156.0f, 0);
-        Ps_Align(0);
-        Ps_Text(22.0f, 172.0f, "LOOKING FOR", 0.46f, 150.0f, 0);
-        Ps_Text(22.0f, 190.0f, "THE HOST...", 0.46f, 150.0f, 0);
     } else {
-        Ps_Text(22.0f, 94.0f, "JOINING ROOM", 0.56f, 0.0f, 0);
+        Ps_Text(22.0f, 94.0f, "JOINING LOBBY", 0.56f, 0.0f, 0);
         Ps_Align(1);
         Ps_Text(95.0f, 120.0f, sTb->code, 1.2f, 156.0f, 0);
         Ps_Align(0);
         Ps_Text(22.0f, 172.0f, "LOOKING FOR", 0.46f, 150.0f, 0);
-        Ps_Text(22.0f, 190.0f, "THE HOST...", 0.46f, 150.0f, 0);
+        Ps_Text(22.0f, 190.0f, "THE LOBBY...", 0.46f, 150.0f, 0);
     }
     Ps_Align(1);
     if (sTb->found) {
-        Ps_Text(262.0f, 302.0f, sTb->watch ? "THE MATCH IS STARTING!" : "YOUR RIVAL IS HERE!", 0.56f, 164.0f, 5);
+        Ps_Text(262.0f, 302.0f, "YOUR RIVAL IS HERE!", 0.56f, 164.0f, 5);
     } else {
         sprintf(line, Tb_Fmt("SEARCHING...  %d:%02d"), (int)(secs / 60), (int)(secs % 60));
         Ps_Text(262.0f, 302.0f, line, 0.52f, 164.0f, 0);
@@ -1980,7 +1757,7 @@ static void Tb_DrawBlockText(void) {
 
     Ps_Heading(80.0f, 108.0f, "No Quick Match", 0.9f, 250.0f, 0x80);
     Ps_Msg(80.0f, 146.0f, "Quick match needs the original disc's data.", 1.0f, 0x80);
-    Ps_Msg(80.0f, 166.0f, "With friends, both need the same data.", 1.0f, 0x80);
+    Ps_Msg(80.0f, 166.0f, "In a lobby with friends, both need the same data.", 1.0f, 0x80);
     while (*m != 0 && strncmp(m, "modified:", 9) != 0) {
         m++;
     }
@@ -2036,7 +1813,7 @@ static void Tb_DrawSparText(void) {
     Ps_Text(266.0f, 117.0f, Tb_Fighter(sTb->spMe), 0.54f, 170.0f, 3);
     Ps_Text(266.0f, 151.0f, Tb_Fighter(sTb->spFoe), 0.54f, 170.0f, 3);
     Ps_Align(0);
-    Ps_Text(28.0f, 240.0f, sTb->host == 2 ? "QUICK MATCH SEARCH" : sTb->host ? "YOUR ROOM IS OPEN" : "JOINING A ROOM", 0.5f, 260.0f, 2);
+    Ps_Text(28.0f, 240.0f, sTb->host == 2 ? "QUICK MATCH SEARCH" : "JOINING A LOBBY", 0.5f, 260.0f, 2);
     sprintf(line, Tb_Fmt("SEARCHING  %d:%02d"), (int)(secs / 60), (int)(secs % 60));
     Ps_Text(28.0f, 264.0f, line, 0.52f, 260.0f, 5);
     Ps_Text(28.0f, 292.0f, "THE MATCH STARTS THE MOMENT", 0.42f, 260.0f, 0);
@@ -2127,7 +1904,6 @@ static void Tb_DrawProfileText(void) {
 #define LB_ACT_LEAVE 4
 #define LB_ACT_BRACKET 5
 
-static PortLobbyView sTbLv; /* (what the page shows this frame) */
 
 static char *sTbBattleName[5] = {"SINGLE BATTLE", "TEAM BATTLE", "DP BATTLE: 10 DP", "DP BATTLE: 15 DP", "DP BATTLE: 20 DP"};
 static char *sTbRuleName[LB_RULES] = {"Mode", "Battle", "Time Limit", "Game Speed", "Rollback", "Input Delay"};
@@ -2155,6 +1931,8 @@ static char *sTbLobbyLines[] = {
     "The connection to the lobby's owner was lost: the lobby is closed.",
     "This lobby is full (8 places).",
     "The lobby owner's game is a different version: joining needs the same release.",
+    "The game at that address is a different version: joining needs the same release.",
+    "Someone with another version of the game tried to join.",
     "The lobby owner's game data are not the same as yours (a modified disc image or mods on one side): you cannot join.",
     "That address is not known.",
     "No socket could be opened.",
@@ -2318,16 +2096,16 @@ static void Tb_RuleValue(char *out, s32 i) {
     }
 }
 
-/* The page opens (from the hub's Lobby, Join Room with a lobby's code, or the screens opened with a lobby on). */
+/* The page opens (from New Lobby, Join with a lobby's code, Join by Address, or the screens opened with a lobby on). */
 static void Tb_LobbyOpen(void) {
     /* the hosts of the page it comes from go off to the right while the lobby's windows come in from the left (the
        lobby's page has no room for them) */
     s32 join = sTb->mode == TB_JOIN || sTb->mode == TB_ADDR;
 
-    sTb->lbHostPose = sTb->mode == TB_HUB ? TBO_HOSTS_MIC_WAVE : join ? TBO_HOSTS_PUZZLED
+    sTb->lbHostPose = sTb->mode == TB_HUB ? TBO_HOSTS_MIC_WAVE : sTb->mode == TB_CREATE ? TBO_HOSTS_ARMS_CROSSED : join ? TBO_HOSTS_PUZZLED
                     : sTb->mode == TB_WAIT ? (sTb->found ? TBO_HOSTS_CHEER : TBO_HOSTS_BINOCULARS) : -1;
-    sTb->lbHostX = sTb->mode == TB_HUB ? 396.0f : join ? 432.0f : sTb->found ? 426.0f : 434.0f;
-    sTb->lbHostH = sTb->mode == TB_HUB ? 262.0f : join ? 200.0f : sTb->found ? 180.0f : 210.0f;
+    sTb->lbHostX = sTb->mode == TB_HUB ? 396.0f : sTb->mode == TB_CREATE ? 408.0f : join ? 432.0f : sTb->found ? 426.0f : 434.0f;
+    sTb->lbHostH = sTb->mode == TB_HUB ? 262.0f : sTb->mode == TB_CREATE ? 250.0f : join ? 200.0f : sTb->found ? 180.0f : 210.0f;
     sTb->lbPopClose = 0;
     sTb->lbHostT = 0;
     sTb->lbSeenState = sTbLv.state;
@@ -2343,16 +2121,36 @@ static void Tb_LobbyOpen(void) {
     Tb_SetMode(TB_LOBBY);
 }
 
-/* The hub's Lobby: a new lobby, owned by this game, with a room code; the rules to begin with are Create Room's. */
-static void Tb_LobbyCreate(void) {
+/* New Lobby: a lobby owned by this game, with a code (byCode) or on this PC's port (Host by Address); the rules to
+   begin with are the last ones set on a lobby's page (Tb_LobbyKeepRules). */
+static void Tb_LobbyCreate(s32 byCode) {
     if (!Tb_Vanilla(0)) {
         return;
     }
     Snd_PlaySe(1, 1);
+    Tb_SaveChoices(); /* (the port) */
     Port_LobbyCancel();
     Port_NetNameSet(Port_NetNameGet());
-    Port_LobbyCreate(1, 0, sTb->battle, sTb->time, Port_Setting("net_speed_host", Port_NetSpeedStandard()), sTb->roll, sTb->delay + 1);
+    Port_LobbyCreate(byCode, byCode ? 0 : sTb->port, sTb->battle, sTb->time, sTb->speed, sTb->roll, sTb->delay + 1);
+    Port_LobbyView(&sTbLv);
     Tb_LobbyOpen();
+}
+
+/* The owner's rules, kept for the next lobby when they change (they were Create Room's choices before 0.1.39). */
+static void Tb_LobbyKeepRules(void) {
+    PortLobbyView *v = &sTbLv;
+
+    if (!v->owner || v->state != 2) {
+        return;
+    }
+    if (v->battle != sTb->battle || v->time != sTb->time || v->speed != sTb->speed || v->rollback != sTb->roll || v->delay - 1 != sTb->delay) {
+        sTb->battle = v->battle;
+        sTb->time = v->time;
+        sTb->speed = v->speed;
+        sTb->roll = v->rollback;
+        sTb->delay = v->delay - 1;
+        Tb_SaveChoices();
+    }
 }
 
 /* The buttons on the right, by place (0 top left, 1 top right, 2 bottom left, 3 bottom right): LB_ACT_, 0 none. The
@@ -2686,6 +2484,7 @@ static void Tb_LobbyUpdate(s32 live) {
         return;
     }
     own = v->owner && v->phase == 0;
+    Tb_LobbyKeepRules();
     if (v->state != 2) { /* under way, or closed: the window says it (Tb_DrawLobbyWin) */
         if (sTb->lbChat) {
             Tb_ChatClose();
@@ -2737,6 +2536,8 @@ static void Tb_LobbyUpdate(s32 live) {
         Ps_Prompt(0, "Enter");
         if (v->code[0] != 0) {
             Ps_Prompt(1, "Copy Code");
+        } else if (v->owner && v->port > 0 && Tb_HostAddr(v->port)[0] != 0) {
+            Ps_Prompt(1, "Copy Address");
         }
         if (Tb_LobbyCanStart() && !(sTb->lbCol == 1 && sTb->lbRight < LB_BTN)) {
             Ps_Prompt(7, Tb_LobbyActName(LB_ACT_START));
@@ -2838,6 +2639,11 @@ static void Tb_LobbyUpdate(s32 live) {
         PortTbo_Copy(v->code);
         Snd_PlaySe(1, 1);
         Tb_Note("COPIED: PASTE THE CODE TO THE OTHERS");
+    } else if ((pad->gamePressed & PADG_SQUARE) && v->owner && v->port > 0 && Tb_HostAddr(v->port)[0] != 0 && sTb->lbPicked < 0) {
+        PortTbo_Copy(Tb_HostAddr(v->port)); /* (this PC's address on its network and the port: over the internet the
+                                                public address, which this game does not know) */
+        Snd_PlaySe(1, 1);
+        Tb_Note("COPIED: PASTE THE ADDRESS TO THE OTHERS");
     } else if ((pad->gamePressed & PADG_START) && v->owner && sTb->lbPicked < 0) {
         Tb_LobbyStart();
     } else if (pad->gamePressed & PADG_TRIANGLE) {
@@ -3010,12 +2816,22 @@ static void Tb_DrawLobbyText(void) {
         Ps_Text(270.0f, Ps_TextTop(65.0f, 0.46f), "LOBBY CODE", 0.46f, 0.0f, 2);
         Ps_Text(270.0f, Ps_TextTop(83.0f, 0.95f), v->code, 0.95f, 120.0f, 0);
         Ps_Align(2);
-        Ps_Text(490.0f, Ps_TextTop(65.0f, 0.4f), v->owner ? "GIVE IT TO THE OTHERS" : "JOIN ROOM WITH IT", 0.4f, 120.0f, 4);
+        Ps_Text(490.0f, Ps_TextTop(65.0f, 0.4f), v->owner ? "GIVE IT TO THE OTHERS" : "THE OTHERS JOIN WITH IT", 0.4f, 120.0f, 4);
         Ps_Align(0);
-    } else if (v->owner && v->port > 0) {
-        Ps_Text(270.0f, Ps_TextTop(65.0f, 0.46f), "OTHERS JOIN WITH YOUR ADDRESS AND PORT", 0.46f, 220.0f, 2);
+    } else if (v->owner && v->port > 0) { /* Host by Address: the port, and this PC's address on its network */
+        const char *lan = Port_NetLanAddress();
+
+        Ps_Text(270.0f, Ps_TextTop(65.0f, 0.46f), "PORT", 0.46f, 0.0f, 2);
         sprintf(line, "%d", (int)v->port);
-        Ps_Text(270.0f, Ps_TextTop(83.0f, 0.8f), line, 0.8f, 120.0f, 0);
+        Ps_Text(270.0f, Ps_TextTop(83.0f, 0.8f), line, 0.8f, 80.0f, 0);
+        Ps_Align(2);
+        Ps_Text(490.0f, Ps_TextTop(65.0f, 0.4f), "ON YOUR NETWORK", 0.4f, 130.0f, 4);
+        if (lan[0] != 0) { /* (not `?:` between the network's text and a literal: the 32-bit pointers) */
+            Ps_Text(490.0f, Ps_TextTop(83.0f, 0.5f), (char *)lan, 0.5f, 136.0f, 5);
+        } else {
+            Ps_Text(490.0f, Ps_TextTop(83.0f, 0.5f), "-", 0.5f, 136.0f, 5);
+        }
+        Ps_Align(0);
     } else {
         Ps_Text(270.0f, Ps_TextTop(65.0f, 0.46f), "LOBBY", 0.46f, 0.0f, 2);
         Ps_Text(270.0f, Ps_TextTop(83.0f, 0.6f), "JOINED BY ADDRESS", 0.6f, 220.0f, 0);
@@ -3101,7 +2917,7 @@ static void Tb_DrawLobbyWin(void) {
         Ps_Panel(TBO_KIT_WINDOW, 40.0f, 110.0f, 330.0f, 250.0f, 0x80);
         if (v->state == 1) {
             Ps_Heading(60.0f, 118.0f, v->owner ? "Opening the Lobby" : "Joining the Lobby", 0.9f, 250.0f, 0x80);
-            Ps_Msg(60.0f, 160.0f, v->owner ? "Asking the matchmaking service for a code..." : "Looking for the lobby's owner...", 0.88f, 0x80);
+            Ps_Msg(60.0f, 160.0f, !v->owner ? "Looking for the lobby's owner..." : v->port > 0 ? "Opening the port..." : "Asking the matchmaking service for a code...", 0.88f, 0x80);
         } else {
             Ps_Heading(60.0f, 118.0f, "No Longer in the Lobby", 0.9f, 250.0f, 0x80);
             if (v->error[0] != 0) { /* (not `?:` between the view's line and a literal: the 32-bit pointers) */
@@ -3754,32 +3570,23 @@ static void Tb_BracketFocus(char *focus) {
 
 /* What the hosts say in the box at the foot of the screen (two lines at most). */
 static char *Tb_Help(void) {
-    if (sTb->say > 0) { /* (why a search failed, or what a Watch found: Tb_Say) */
+    if (sTb->say > 0) { /* (why a search failed: Tb_Say) */
         return sTb->sayLine;
     }
     switch (sTb->mode) {
     case TB_HUB:
         return sTbHubSay[sTb->hubCur];
     case TB_CREATE:
-        return sTb->crCur == CR_DELAY ? "How late your moves come out. Automatic measures the line when the match starts."
-               : sTb->crCur == CR_ROLL ? "Your moves come out at once and the game corrects itself. More frames cope with a slower line."
-               : sTb->crCur == CR_SPEED ? "How fast the match runs, for both of you. 114% is the competitive standard."
-               : sTb->crCur == CR_ADDR ? "No code needed: your rival types your address and this port on Join by Address."
-               : "Set the rules of your tournament! Then your rival joins with the room code.";
+        return sTb->crCur == CR_ADDR ? "No code: the others type your address and this port on Join by Address. Left / right, L1 / R1 change it."
+                                     : "Your lobby gets a code: give it to your friends, they type it on Join. Set the rules on its page!";
     case TB_JOIN:
-        return "Enter your rival's room code, or Paste the one they sent you! Then Join, or Watch their match.";
+        return "Enter the lobby's code, or Paste the one they sent you! Then Join: to play, or to watch from the stands.";
     case TB_ADDR:
-        return "Type the host's address, and :port if it is not 7000. Then Join, or Watch the match!";
+        return "Type the lobby owner's address, and :port if it is not 7000. Then Join!";
     case TB_WAIT:
-        if (sTb->watch) {
-            return sTb->found ? "Here we go! Enjoy the match!" : "Getting you a seat in the stands... You will see the fight a moment after the players.";
-        }
-        if (sTb->host == 1 && sTb->byAddr && !sTb->found) {
-            return "Your rival types this address on Join by Address! Over the internet, your public one.";
-        }
         return sTb->found ? "Here we go! The match is starting!" : "Looking for a worthy challenger... Warm up in Training meanwhile!";
     case TB_BLOCK:
-        return "Sorry! Quick match is for the game straight off the disc. Modded? Play friends with a room!";
+        return "Sorry! Quick match is for the game straight off the disc. Modded? Play your friends in a lobby!";
     case TB_SPAR:
         return "Warm up at the tournament while we search! Pick yourself and a sparring partner.";
     case TB_QUICK:
@@ -3791,7 +3598,7 @@ static char *Tb_Help(void) {
         return "Show everyone who you are! This is the name your rivals see.";
     case TB_LOBBY:
         if (sTbLv.state == 1) {
-            return sTbLv.owner ? "Opening your lobby! The others join it with its code." : "Knocking at the lobby's door...";
+            return !sTbLv.owner ? "Knocking at the lobby's door..." : sTbLv.port > 0 ? "Opening your lobby! The others join it with your address." : "Opening your lobby! The others join it with its code.";
         }
         if (sTbLv.state == 3) {
             return "You are out of that lobby. OK takes you back to the online menu.";
@@ -3805,8 +3612,8 @@ static char *Tb_Help(void) {
         if (sTbLv.mode && sTbLv.tour != 1) {
             return "Tournament: Entrants sets the player places. Move people into them (you too, to play), then Start Tournament!";
         }
-        return sTbLv.code[0] != 0 ? "Your lobby is open! Give the others its code: they join with Join Room. Then put two of you in 1P and 2P."
-                                  : "Your lobby is open! The others join with your address and port. Then put two of you in 1P and 2P.";
+        return sTbLv.code[0] != 0 ? "Your lobby is open! Give the others its code: they type it on Join. Then put two of you in 1P and 2P."
+                                  : "Your lobby is open! The others join with your address and port (Join by Address). Then 1P and 2P.";
     case TB_BRACKET:
         return Tb_BracketHelp();
     }
@@ -3814,7 +3621,7 @@ static char *Tb_Help(void) {
 }
 
 /* Each page's title (by TB_ mode), as its heading shows it and the screen reader says it. */
-static char *sTbTitle[12] = {"Tenkaichi Budokai Online", "Create Room", "Join Room", "Searching", "Profile", "Profile", "Quick Match",
+static char *sTbTitle[12] = {"Tenkaichi Budokai Online", "New Lobby", "Join", "Searching", "Profile", "Profile", "Quick Match",
                              "Train While Waiting", "Tenkaichi Budokai Online", "Lobby", "Tournament", "Join by Address"};
 
 /* ---- the screen reader (port/src/gs/a11y.c; silent unless the player has it on). The game's own screens are read
@@ -3824,7 +3631,7 @@ static char *sTbTitle[12] = {"Tenkaichi Budokai Online", "Create Room", "Join Ro
 extern void PortA11y_Say(const char *text, int flags);
 #define TB_SAY_INTERRUPT 1
 
-/* A room code letter by letter ("J D Y 2 T E"). */
+/* A lobby's code letter by letter ("J D Y 2 T E"). */
 static void Tb_Spell(char *out, const char *code, s32 max) {
     s32 n = 0;
     s32 i;
@@ -3888,11 +3695,11 @@ static void Tb_Speak(void) {
         break;
     }
     case TB_JOIN:
-        Tb_KeyFocus(focus, KEY_ROWS, sTbKeys, sTbJoinBtn, 5);
+        Tb_KeyFocus(focus, KEY_ROWS, sTbKeys, sTbJoinBtn, 4);
         Ps_Copy(now, sTb->code, 40);
         break;
     case TB_ADDR:
-        Tb_KeyFocus(focus, ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 4);
+        Tb_KeyFocus(focus, ADDR_ROWS, sTbAddrKeys, sTbAddrBtn, 3);
         Ps_Copy(now, sTb->addr, 40);
         break;
     case TB_NAME:
@@ -3900,21 +3707,7 @@ static void Tb_Speak(void) {
         Ps_Copy(now, sTb->typed, 40);
         break;
     case TB_WAIT:
-        if (sTb->found && sTb->watch) {
-            Ps_Copy(focus, "The match begins: you are watching.", 160);
-        } else if (sTb->watch) {
-            Ps_Copy(focus, Port_LobbySpectateWaiting() ? "The match has not begun yet: you watch it when it does" : "Asking the host to let you watch", 160);
-        } else if (sTb->host == 1 && sTb->byAddr) {
-            Ps_Copy(focus, "Hosting by address. Your address on this network: ", 160);
-            if (Tb_HostAddr()[0] != 0) {
-                Ps_Cat(focus, Tb_HostAddr(), 160);
-            } else {
-                Ps_Cat(focus, "not known", 160);
-            }
-        } else if (sTb->byAddr) {
-            Ps_Copy(focus, "Joining ", 160);
-            Ps_Cat(focus, sTb->addr, 160);
-        } else if (sTb->found) {
+        if (sTb->found) {
             Ps_Copy(focus, "Your rival is here! The match begins.", 160);
             if (Port_LobbyRivalRegion()[0] != 0) {
                 Ps_Cat(focus, " Your rival is from ", 160);
@@ -3922,16 +3715,8 @@ static void Tb_Speak(void) {
             }
         } else if (sTb->host == 2) {
             Ps_Copy(focus, sTb->queue ? "Quick match, teams: searching" : "Quick match, one on one: searching", 160);
-        } else if (sTb->host) {
-            if (Port_LobbyCode()[0] != 0) {
-                Ps_Copy(focus, "Your room code: ", 160);
-                Tb_Spell(part, Port_LobbyCode(), 64);
-                Ps_Cat(focus, part, 160);
-            } else {
-                Ps_Copy(focus, "Getting a room code", 160);
-            }
         } else {
-            Ps_Copy(focus, "Joining room ", 160);
+            Ps_Copy(focus, "Joining lobby ", 160);
             Tb_Spell(part, sTb->code, 64);
             Ps_Cat(focus, part, 160);
         }
@@ -4246,7 +4031,7 @@ static void Tb_DrawText(void) {
 
 /* ----------------------------------------------------------------------------------------------- the frame loop */
 /* From the main menu's item until triangle on the hub. Returns 1 when it was left for "Train While Waiting" (the
-   room is still open; Duel_Main goes on to the Ultimate Training menu), 0 back to the main menu. */
+   search is still on; Duel_Main goes on to the Ultimate Training menu), 0 back to the main menu. */
 /* The Duel menu's screen unpacked (the windows' data), while the screens run. */
 static void *sTbWinRes;
 
@@ -4280,8 +4065,8 @@ s32 PortTbo_Run(void) {
 
     sTb = Heap_Alloc(sizeof(TboScreen), 0x20, 0, 2);
     memset(sTb, 0, sizeof(TboScreen));
-    sTb->hubCur = HUB_CREATE;
-    sTb->hubY = Tb_HubRowY(HUB_CREATE);
+    sTb->hubCur = HUB_LOBBY;
+    sTb->hubY = Tb_HubRowY(HUB_LOBBY);
     Tb_LoadChoices();
     Port_NetNameGet();
     Port_LobbyHelloAsk(); /* (once per opening, as Dragon Net Battle's window did: is this release still let in; the
@@ -4290,15 +4075,11 @@ s32 PortTbo_Run(void) {
     if (Port_LobbyWantsScreen()) { /* in a lobby (joined from Dragon Net Battle, or the screens left meanwhile): its page */
         Port_LobbyView(&sTbLv);
         Tb_LobbyOpen();
-    } else if (Port_LobbyInBackground()) { /* back with a room open (from the main menu after training): its search again */
+    } else if (Port_LobbyInBackground()) { /* back with a search on (from the main menu after training): its page again */
         Port_LobbyBackground(0);
         sTb->host = sTbBgKind;
         sTb->queue = sTbBgQueue;
         Ps_Copy(sTb->code, sTbBgCode, CODE_LEN + 1);
-        sTb->byAddr = sTbBgByAddr;
-        sTb->port = sTbBgPort;
-        Ps_Copy(sTb->addr, sTbBgAddr, ADDR_LEN + 1);
-        sTb->addrLen = Ps_Len(sTb->addr);
         sTb->waitBack = TB_HUB;
         Tb_SetMode(TB_WAIT);
     }
@@ -4431,16 +4212,8 @@ void PortTbo_SparSign(void) {
     if (sTbBgKind == 2) {
         Ps_Copy(line, "Quick Match: ", 64);
         Ps_Cat(line, sTbBgQueue ? "Teams" : "One on One", 64);
-    } else if (sTbBgKind == 1 && sTbBgByAddr) {
-        sprintf(line, Tb_Fmt("Your room: port %d"), (int)sTbBgPort);
-    } else if (sTbBgKind == 1) {
-        Ps_Copy(line, "Your room: ", 64);
-        Ps_Cat(line, Port_LobbyCode(), 64);
-    } else if (sTbBgByAddr) {
-        Ps_Copy(line, "Joining ", 64);
-        Ps_Cat(line, sTbBgAddr, 64);
     } else {
-        Ps_Copy(line, "Joining room ", 64);
+        Ps_Copy(line, "Joining lobby ", 64);
         Ps_Cat(line, sTbBgCode, 64);
     }
     Ps_Msg(146.0f, 93.0f, line, 1.0f, 0x80);

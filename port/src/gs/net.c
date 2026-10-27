@@ -53,14 +53,19 @@ enum { T_HELLO = 1, T_HELLO_ACK = 2, T_INPUT = 3, T_BYE = 4, T_PING = 5, T_PONG 
 /* The version of what goes over the line. The greeting and its answer carry it, and two copies that differ do not
    start a match (the input packets changed with version 2: times for the ping were added; a copy that read them
    the old way took them for input). 1 was releases 0.1.8 and 0.1.9, which said no version. */
-enum { NET_VERSION = 5, IN_HEAD = 44 }; /* 3 (0.1.15): the host's battle rules travel with its choices.
+enum { NET_VERSION = 6, IN_HEAD = 44 }; /* 3 (0.1.15): the host's battle rules travel with its choices.
    4 (0.1.34): a session's start-up no longer follows the player's "Skip logos" / "Skip intro video" (0.1.32 and
    0.1.33 with either on computed another start-up than the other side and the two never agreed again: such a copy
    must not be let into a match); the input packets carry the sender's check value (sync_*, below), 12 bytes more
    in their head; the goodbye can say why.
    5: a session's start-up is run with nothing pressed and without waiting for the other side, which then is not
    sent the start-up's input; the two meet at the character select (T_ARRIVED). A copy of 4 would wait for input
-   that does not come. */
+   that does not come.
+   6 (0.1.39): lobbies replace the rooms of two (a friend is played in a lobby; Tenkaichi Budokai Online has no
+   Create Room and no Watch), and a peer without a gameplay fingerprint is refused (FP_PEER_REQUIRED). Nothing a
+   0.1.38 game sends is taken: the matchmaking service's queues and codes are kept apart by this number, and by
+   address each side says "another version" (a lobby's owner refuses the greeting; a 0.1.38 host of two answers
+   the lobby member's spectator question with SPEC_NO_VERSION, net_lobby.c). */
 static int sVersionBad; /* the other side answered with another version */
 static const uint32_t kVersion = NET_VERSION;
 #include "net_match.h"
@@ -413,12 +418,13 @@ static void net_send(const void *buf, int n, const struct sockaddr_in *to) {
    data (Port_LobbyStartQuick); with friends (a room code, a lobby, an address, watching) the two need the same data,
    modified or not. A game never begins to connect before its own fingerprint is known (fp_known: the lobby's start
    waits for it, state 6, and so does net_start), so a copy of this release always sends one.
-   A copy that sends none: 0.1.37 (NET_VERSION 5 as well, nothing else in its greetings tells it from 0.1.37.1 to
-   0.1.38.9, which send one), or a 0.1.37.1 to 0.1.38.9 that connected before its own was computed. It is let in
-   while FP_PEER_REQUIRED is 0 (0.1.37 is still let in by the matchmaking service: MIN_RELEASE 137), refused once it
-   is 1, which goes with MIN_RELEASE 138. BT3_TEST_FPRINT=<hex>: testing, this copy claims that value (plat_fprint.c);
-   BT3_TEST_FPRINT=off: it sends none, as 0.1.37; BT3_TEST_FP_REQUIRED=1: FP_PEER_REQUIRED for this copy. */
-enum { FP_MARK = 0x46505231, FP_PEER_REQUIRED = 0 };
+   A copy that sends none: 0.1.37 (NET_VERSION 5 as well, nothing else in its greetings told it from 0.1.37.1 to
+   0.1.38.9, which send one), or a 0.1.37.1 to 0.1.38.9 that connected before its own was computed. Those were let
+   in while FP_PEER_REQUIRED was 0; from 0.1.39 (NET_VERSION 6: every copy of it sends one) a peer, a spectator or
+   a lobby's member without one is refused. BT3_TEST_FPRINT=<hex>: testing, this copy claims that value
+   (plat_fprint.c); BT3_TEST_FPRINT=off: it sends none, as 0.1.37 did; BT3_TEST_FP_REQUIRED=0: FP_PEER_REQUIRED off
+   for this copy. */
+enum { FP_MARK = 0x46505231, FP_PEER_REQUIRED = 1 };
 extern int Port_DataFingerprint(unsigned long long *out); /* plat_fprint.c */
 extern int Port_DataFingerprintNeed(void);
 extern int Port_DataFingerprintOriginal(void);
