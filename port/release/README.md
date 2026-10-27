@@ -6,6 +6,13 @@ runs locally with `port/release/build.sh` (docker). The tag is the release's ful
 programs that call themselves `0.1.38.10` (`BT3_VERSION`); the games compare that with the newest release's tag to
 offer updates. Raise `PORT_RELEASE` (port/src/port_release.h) when the matchmaking service must tell versions apart.
 
+When a release changes what goes over the line (`NET_VERSION`, port/src/gs/net.c), older games cannot play it
+anywhere: the service keeps its queues and codes apart by that number, and by address each side says "another
+version". After publishing such a release, set the Worker's variable `MIN_RELEASE` to its `PORT_RELEASE` (Cloudflare
+dashboard > the Worker > Settings > Variables), so that older games are told to update instead of finding nobody;
+if the Worker checks build keys (`BUILD_KEYS`), the new release's key must be in it first. 0.1.39 is such a release
+(`PORT_RELEASE` 139, `NET_VERSION` 6: lobbies replace the rooms of two): `MIN_RELEASE` 139 once it is out.
+
 Two repository secrets (Settings > Secrets and variables > Actions):
 
 | secret | what | without it |

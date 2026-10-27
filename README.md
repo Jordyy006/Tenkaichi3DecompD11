@@ -49,17 +49,19 @@ game's data from it, and it stays on your computer.
   developers left in: all characters, stages, music, items and Zenni).
 
 - **Online play, experimental** (from release 0.1.8): the main menu's **Tenkaichi Budokai Online**, the game's own
-  online screens. One player opens a room (Create Room) and gets a six-character room code, the other joins with
-  the code on Join Room: no port forwarding. Join Room's Watch watches a room's match instead; Create Room's Host by
-  Address and Join Room's By Address play without a code (the host's address and port, typed on a keypad). Lobbies
-  of up to eight, tournaments and quick matches are there too. (The first online window, "Dragon Net Battle", is
-  kept under F1 > Online > Advanced.)
+  online screens. To play friends, one player opens a **lobby** (Lobby > Open Lobby) and gets a six-character code;
+  the others type it on **Join**: no port forwarding. A lobby has up to eight places: two play, six watch, and its
+  owner chooses who plays, the rules, rematches and tournaments; playing one friend is a lobby of two. Lobby > Host
+  by Address and Join > By Address do the same without a code (the owner's address and port, typed on a keypad).
+  Quick Match pairs you with a stranger. (Since 0.1.39 there are no rooms of two and no Watch button: a spectator is
+  a lobby member in a spectator's place. The first online window, "Dragon Net Battle", is kept under F1 > Online >
+  Advanced, and opens and joins lobbies the same way.)
   Both players get the same roster with everything unlocked, each sees their own fighter's view full screen, and leaving
   the match puts each player back where they were with their own save. Linux and Windows play against each
-  other. With rollback (the host chooses how many frames, and the input delay) your own moves come out at once
-  and the game corrects itself when the other player's buttons arrive.
-  The host also chooses the battle (single, team, or DP battle with a limit of 10, 15 or 20), the time limit and the
-  game speed.
+  other. With rollback (the lobby's owner chooses how many frames, and the input delay) your own moves come out at
+  once and the game corrects itself when the other player's buttons arrive.
+  The owner also chooses the battle (single, team, or DP battle with a limit of 10, 15 or 20), the time limit and the
+  game speed, on the lobby's page.
   Each player sees their own gauges on the left with the players' names under them, and hears the voice language
   chosen in their own save.
   The two players can write to each other: Tab opens a line, Enter sends it, Esc or Tab puts it away (the keyboard
@@ -69,17 +71,17 @@ game's data from it, and it stays on your computer.
 
 Online play is new. It has been played over the internet between a Linux and a Windows machine. The input delay
 is chosen from the connection when a match starts (or set by the host), both players need the same release (the
-game says so when they differ; 0.1.10 does not play against 0.1.8 / 0.1.9, and 0.1.15 does not play against
-0.1.14 and earlier). F1, Video has a meter for the frame rate and, in a match, the ping, rollbacks and waits. The 32-bit
+game says so when they differ; 0.1.10 does not play against 0.1.8 / 0.1.9, 0.1.15 does not play against
+0.1.14 and earlier, and 0.1.39 does not play against 0.1.38.x). F1, Video has a meter for the frame rate and, in a match, the ping, rollbacks and waits. The 32-bit
 Linux build has no rollback. [docs/netplay_notes.md](docs/netplay_notes.md) is the working log of how it is built
 and what was checked.
 
-Room codes go through a small matchmaking service (a Cloudflare Worker; its whole source is in
+Lobby codes and quick matches go through a small matchmaking service (a Cloudflare Worker; its whole source is in
 [port/matchmaking](port/matchmaking), and `BT3_MATCH_URL` points the game at another copy of it). The game tells it
-the name of your Profile and the addresses it can be reached at; the service keeps them with the room for at
-most ten minutes and hands them to the player who enters the code. The two games then send to each other
+the name of your Profile and the addresses it can be reached at; the service keeps them with the code for at
+most ten minutes and hands them to the player who enters the code. The games then send to each other
 directly. Where the routers do not allow that, the match goes through a relay (Cloudflare's TURN service), which
-passes the match's packets (the buttons pressed) on and keeps nothing. Without a room code none of this is used.
+passes the match's packets (the buttons pressed) on and keeps nothing. By address none of this is used.
 
 See [docs/port/README.md](docs/port/README.md) for the running log of what is done, what is verified and what is not.
 

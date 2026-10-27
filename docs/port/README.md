@@ -3622,8 +3622,9 @@ character select, battles and rematches, and its player-1 view is the host's pic
   Change view). Only drawing: the fight's values are the same in every view (tested below; the game's whole state
   differs by the camera, as between the two players' copies).
 
-**In the game.** (Since 2026-10-28 on Tenkaichi Budokai Online's Join Room and Join by Address, WATCH, and F1 >
-Online; see the last chapter. What follows is the window as it was then.) The online window's Join tab has "Watch
+**In the game.** (From 0.1.39 there is no Watch anywhere: a spectator joins a lobby, by its code on Join or its
+owner's address on Join by Address, and is given a spectator's place; see "0.1.39: lobbies replace rooms". What
+follows is the window as it was then.) The online window's Join tab has "Watch
 the match" beside "Join the match" (by address and port, or by room code); the Host tab "Let others watch the match" (setting `net_spectators`, on by default; the host then
 answers no). While the host has no match yet the spectator waits ("The host is there but its match has not begun
 yet"). The players see "N watching: names" small in the top right corner; the spectator a line at the top
@@ -3690,7 +3691,8 @@ game of the one who made it, the owner. The owner puts people in the places, cho
 matches; the two in the player places play, everyone else watches.
 
 **In the game** (changed the same day: the lobby is one of the game's own screens now, no longer an ImGui window; see
-"The screens" below). Tenkaichi Budokai Online's list has Lobby: it asks for nothing, opens a lobby with a room code
+"The screens" below. From 0.1.39 Lobby opens New Lobby, with Open Lobby and Host by Address, and Join Room is
+called Join: "0.1.39: lobbies replace rooms"). Tenkaichi Budokai Online's list has Lobby: it asks for nothing, opens a lobby with a room code
 and shows its page at once, with the code to hand on. Others type that code on Join Room: the service's answer says
 it is a lobby, and the game becomes a member and shows the same page. (By address, `BT3_LOBBY=lobbyjoin:`, Join by Address
 (2026-10-28) and the Dragon Net Battle window's Join tab still work; the window then closes with a line saying that the lobby's screen
@@ -3700,7 +3702,8 @@ is in Tenkaichi Budokai Online, which the main menu goes to by itself.) The page
   The owner chooses a name: Move (then the place: the two swap) or Remove from the Lobby. A newcomer takes the first
   free place (a player's while one is free and no match is on);
 - the rules as rows with left / right: battle (single, team, DP 10 / 15 / 20), time limit, game speed (100 to 150 in
-  steps, 114 marked as the standard), rollback, input delay. A new lobby starts from Create Room's choices. Everyone
+  steps, 114 marked as the standard), rollback, input delay. A new lobby starts from Create Room's choices (from
+  0.1.39: from the rules its owner last set on a lobby's page). Everyone
   sees them change at once; while a match is on they cannot change;
 - Start Match (the owner, with both player places taken; also START), Ready / Not Ready, Chat, leaving (triangle:
   Leave / Close the Lobby, with a yes / no window), the code (square copies it on a PC), and in the box at
@@ -3823,7 +3826,7 @@ of Tenkaichi Budokai Online's pages; "the less we rely on ImGui the better").
 - *Chat* is the name's keypad (letters, digits, -_.!?#&*+, space; the PC keyboard types any plain character but < and
   >), up to 60 characters, sent with Done or START; the lines are in the talk box. No ImGui is left in the lobby.
 - *Getting there.* The hub's new Lobby (between Join Room and Friends; the list is ten bars now, 26 units apart
-  instead of 27.5) makes one with Create Room's rules and the saved speed, asking nothing. Join Room with a lobby's
+  instead of 27.5; from 0.1.39 nine, Lobby in Create Room's place) makes one with Create Room's rules and the saved speed, asking nothing. Join Room with a lobby's
   code goes to the page instead of the search (`Port_LobbyPoll` 5). The screens opened while a lobby is on go to its
   page; so does the main menu (`Port_LobbyWantsScreen`, src/menu/menu_a.c), for a lobby joined from the Dragon Net
   Battle window (which no longer has a Lobby tab, and only says where the lobby's screen is) or by the test switches.
@@ -4013,7 +4016,7 @@ The rule, for every way into online play:
   when both have the same data." Dragon Net Battle's Quick match tab says it in orange before the search and greys
   the button (`Port_LobbyQuickRefusal`); Tenkaichi Budokai Online keeps its window, now "No Quick Match" ("Quick
   match needs the original disc's data. / With friends, both need the same data." and what changed), shown for
-  Quick Match only. Its Create Room, Join Room and Lobby no longer refuse modified data (before, every one of its
+  Quick Match only. Its Create Room, Join Room and Lobby (from 0.1.39: Lobby and Join) no longer refuse modified data (before, every one of its
   ways online wanted the original data, and Dragon Net Battle none).
 - **With friends** the two fingerprints are compared as before (`T_FPRINT` with the greetings; a spectator's and a
   lobby member's greeting carries it, the host or owner compares).
@@ -4292,7 +4295,9 @@ Joseph Llacchua and the commits on it; the chapter "Automatic updates"). Where t
 ## Tenkaichi Budokai Online does what Dragon Net Battle did; the window is put away (2026-10-28)
 
 Everything the Dragon Net Battle window (port/src/gs/ui.cpp, `build_net`) could do is on the game's own screens now
-(src/menu/port_tbo.c), and the window is no longer in the way of a player:
+(src/menu/port_tbo.c), and the window is no longer in the way of a player. (0.1.39 took most of this back out again:
+Create Room, Watch, Host by Address's room of two and F1's "Let others watch your matches" are gone, and the next
+chapter says what replaced them; Join by Address and the keypad stayed.)
 
 - **Watch a room by its code.** Join Room has a second row of buttons under DELETE / PASTE / JOIN: BY ADDRESS and
   WATCH (under JOIN; the cursor still goes to JOIN when the sixth letter is typed, so the pad recordings of the
@@ -4354,3 +4359,74 @@ Windows: built (mingw); not run. The PS2 build of the two game files touched (po
 `#ifdef PORT` only) is unchanged (`cpp -P` md5). Not tested: a real second PC on the network (the LAN address
 shown was this PC's own and joined over 127.0.0.1), a host name typed instead of an address, the PC keyboard and
 PASTE on Join by Address (the pad typed everything), the screen reader's lines for the new pages.
+
+## 0.1.39: lobbies replace rooms (2026-10-28)
+
+Playing a friend is a lobby now, everywhere: a lobby of two plays like the room of two did, and has the rules on its
+page, rematches (Start Match again), spectators' places and tournaments on top. What the rooms had that the lobby
+lacked was nothing: the lobby's rules already had Create Room's battle (single, team, DP 10 / 15 / 20), time limit,
+game speed (the same steps), rollback and input delay.
+
+- **Tenkaichi Budokai Online's list** (src/menu/port_tbo.c): Quick Match, Ranked Match, **Lobby**, **Join**, then the
+  SOON ones and Profile (nine bars; the cursor starts on Lobby). Create Room is gone. **Lobby** opens a small page,
+  New Lobby, with two rows: *Open Lobby* (a code from the matchmaking service, for the others' Join) and *Host by
+  Address* (its value the port, setting `net_port`; left / right by one, L1 / R1 by a hundred). Either opens the
+  lobby's page at once. A new lobby starts with the rules its owner last set on a lobby's page (`Tb_LobbyKeepRules`
+  saves them when they change, in the settings Create Room used: `tbo_battle`, `tbo_time`, `net_speed_host`,
+  `net_rollback2`, `net_delay2`), so nothing chosen before is lost.
+- **Join** (Join Room renamed) is the one place for a code: DELETE / PASTE / JOIN, and under them BY ADDRESS across
+  the row. **No Watch** on Join or on Join by Address: a spectator joins the lobby and is given a spectator's place
+  when the player places are taken (or the owner moves them there). A code is looked up as before
+  (`Port_LobbyStartCode`); the service answers a lobby's, and the game becomes its member.
+- **By address = lobby by address.** Host by Address is `Port_LobbyCreate(0, port, ...)` (the netcode of
+  `BT3_LOBBY=lobby:<port>`); the lobby's page shows PORT and the port where a code would be, and "On your network"
+  this PC's address (`Port_NetLanAddress`); square copies "address:port". Join by Address types the owner's address
+  and :port and JOIN is `Port_LobbyJoin` (`lobbyjoin:`): the lobby's page at once, "Joining the Lobby" until the
+  owner answers. The waiting page of the rooms (WATCHING, HOSTING ON PORT, Copy Address) is only Quick Match's and a
+  code's search now.
+- **Dragon Net Battle** (F1 > Online > Advanced) works on the same state: its Host tab opens a lobby (with a code,
+  or on its port) with the tab's rules as the lobby's first ones, its Join tab joins one (a code, or the owner's
+  address and port); the window then closes saying that the lobby's screen is in Tenkaichi Budokai Online, which the
+  main menu opens by itself. Its "Watch the match" and "Let others watch the match" are gone; Quick match is as it
+  was. The simplest consistent choice: the window makes and joins lobbies, never rooms of two.
+- F1 > Online's "Let others watch your matches" is gone: it was for the rooms of two (a lobby's spectators are its
+  members, whom the owner can remove; `spec_allowed` let them in whatever the setting said already).
+- **Version.** `PORT_RELEASE` 139; `NET_VERSION` 6 (port/src/gs/net.c). Nothing a 0.1.38 game sends is taken: the
+  service keeps its quick match queues and its codes apart by `v` (a code of the other version is "version"), a
+  lobby's owner refuses a member of another version (and says once a minute "Someone with another version of the
+  game tried to join."), and a 0.1.38 game greeted by address answers this one's lobby greeting with nothing: so a
+  member joining a typed address that has had no answer for two seconds also sends, once a second, a spectator's
+  greeting too short to be one and a 1v1 greeting; a 0.1.38 host of two answers the first with `SPEC_NO_VERSION`
+  (taken in `Lobby_Pump`: "The game at that address is a different version: joining needs the same release.") and
+  shows "another version tried" for the second. A lobby's owner answers both with an invitation, which a member
+  connecting ignores.
+- **`FP_PEER_REQUIRED` = 1**: a peer, a spectator or a lobby member that sends no gameplay fingerprint is refused
+  (every 0.1.39 game sends one; `BT3_TEST_FP_REQUIRED=0` turns it off for a test copy).
+- **Updates.** The tag `v0.1.39` (and `v0.1.39.1` ...) is newer than 0.1.38.9 for this release's updater
+  (`UpdateVer_Compare`, port/tests/update: 10 checks more, 44 in all) and for 0.1.38.9's own check (it reads `v0.%d.%d`
+  of the tag: 139 > 138). After publishing, the Worker's variable `MIN_RELEASE` goes to 139 (port/release/README.md);
+  the Worker's code needs no change (quick match still uses its rooms; lobbies are its rooms with `lobby: 1`; the
+  version check of join, watch and the queues is by `v` already).
+
+Tested (Linux, offscreen, 1x, scratch saves and settings with vibration off, `BT3_STICK_TEST=0`, a local stand-in of
+the Worker for every run):
+
+| test | result |
+| --- | --- |
+| lobby by code through the pages: owner Lobby > Open Lobby, two members type the code on Join; two matches with a return to the lobby between, then closed | both matches played; the second member in a spectator's place; every copy's fight values identical to the owner's in both matches (3,077 to 3,127 blanks) |
+| lobby by address through the pages: owner New Lobby > Host by Address (port 47941), joiner Join > By Address `127.0.0.1:47941`, JOIN; a match | played; fight values identical over 3,106 blanks |
+| a 4-entrant tournament (owner and three members by code, `BT3_LOBBY_DO`) | three matches and a champion; every copy identical to the owner's in each (3,765 to 3,787 blanks) |
+| quick match, 0.1.39 against 0.1.39 | paired, played; identical over 4,309 blanks |
+| quick match, 0.1.38.9 (the release) and 0.1.39 alone in the same queue for 90 s | never paired (each waits in its own version's queue) |
+| 0.1.38.9 hosting a match of two on a port, 0.1.39 joining it on Join by Address | "The game at that address is a different version: joining needs the same release." |
+| 0.1.38.9 owning a lobby on a port, 0.1.39 joining it by address | "The lobby owner's game is a different version" |
+| 0.1.39 owning a lobby on a port, 0.1.38.9 joining by address as a game of two (`direct:`) and as a lobby member (`lobbyjoin:`) | both refused with "The lobby owner's game is a different version"; the owner's lobby noted "Someone with another version of the game tried to join." |
+| 0.1.38.9 typing a 0.1.39 lobby's code | the service: "The host's game is a different version" |
+| a lobby member with `BT3_TEST_FPRINT=off` (sends no fingerprint) | refused |
+| update checks (port/tests/update) | 44 of 44 |
+| screenshots | the list without Create Room, New Lobby (both rows), Join without WATCH, Join by Address without WATCH, the lobby by address (owner: port and LAN address; member), the version refusal, Dragon Net Battle's Host tab, F1 > Online |
+| the regular checks against 0.1.38.9 | the heavy recording's 28 pictures identical to the earlier ones; stage 22 uncapped, alternating, three runs each: 4.09 to 4.12 ms per frame both (render thread off), 2.98 to 3.00 both (on) |
+
+Windows: built (mingw), not run. The PS2 build of port_tbo.c is unchanged (`cpp -P` md5; all of it is `#ifdef PORT`).
+Not tested: Dragon Net Battle's buttons pressed (only seen; they call what the pages call), a real second PC, the
+screen reader's lines of the new page.
