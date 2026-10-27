@@ -4101,11 +4101,51 @@ playing (the match ends for everyone, as a player leaving always ended it), else
 is known ("A won by walkover"). The owner leaving closes the lobby, and the tournament with it, as before. A newcomer
 during a tournament is a spectator of it.
 
-**Protocol.** LOBBY_VERSION 3. STATE (now 608 bytes) carries after the lobby the mode and the bracket: state, size,
-number of entrants, the Entrants rule, the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
+**Rejoining** (asked for by the user after the first version, and decided with him). Leaving on purpose (Leave,
+removed) is a walkover at once, as above. An entrant whose game falls silent (15 s without a word: a lost
+connection, a crash, the program closed without its goodbye) keeps its place in the bracket for **90 s**: the
+lobby says "NAME lost the connection: the place is held for 90 s", its box on the bracket says DISCONNECTED and the
+time left, and its next match cannot be started meanwhile. If it joins with the lobby's code within the 90 s it is
+back in the place it had ("NAME is back in the tournament"); the match the drop broke was ended and is played again
+from its start, as any match without a result. After 90 s: "NAME did not come back in time", and the walkover.
+
+Who is who is told by a secret **rejoin token**, not the name: when the tournament starts the owner's game draws
+one for each entrant (128 bits from the system's random source) and sends it to that member alone (`TOKEN`, a packet
+of its own, with every STATE; never in what the others get). The member keeps it in memory and in
+`lobby_rejoin.txt` beside its settings file (the time, the lobby's code, the tournament's number, the token), so a
+crash or a start again keeps it; its greeting to the lobby of that code carries it. A greeting with the token of an
+entrant whose place is held puts the newcomer in that place (whoever sat there moves to the newcomer's free place)
+and draws a **new** token for it, so a copy of the old one is worth nothing; if the old game is still there but
+silent (the new one came before the 15 s were up), the old one is dropped at once and the place held. Any other
+greeting (no token, another's, an old one, the same name) is a new member in a free place, a spectator of the
+tournament. The owner forgets a token (memory only) when its entrant is out, leaves on purpose, runs out of the 90 s,
+rejoins (the new one replaces it), and when the tournament ends or is called off or the lobby closes; it then tells
+the member to forget it (`TOKEN` "forget", ten times), as it does a member that came with a token no longer known.
+The member removes its file when told so, when the lobby is closed or it is removed (CLOSE), when it leaves on
+purpose, when the lobby of its code does not answer, and at the program's start when the file is more than an hour
+old.
+
+While a tournament is on, a newcomer takes a spectator's place (its entrants are drawn already). The member keeps the
+code it asked the service for (net.c, `sCodeAsked`): the service's answer to a member has no code, and the token is
+sent only to the lobby of its own code.
+
+Tested (offscreen, local Worker, the virtual test pad everywhere): owner + 3, the member playing the first match
+killed (SIGKILL) 40 s into it; a stranger with its name and no token joined (a spectator); the killed game started
+again with its settings folder and joined with the code: "is back in the tournament" in its old place, a new token,
+the broken match played again from the start and the tournament played out, every spectator's check values equal
+to its host's in every match (0 differed); a copy of the old token in a fourth game: "a member as any other, told to
+forget it"; every token file gone at the end (the losers' when they were out, the rest with the champion). Owner + 1,
+the member killed and started again after the 90 s: "did not come back in time", the walkover, the champion; it
+joined as an ordinary member and was told to forget its token. A token file two hours old: removed at the start.
+The bracket's DISCONNECTED countdown and the box's "Waiting for NAME to come back." were looked at. The Windows build
+compiles.
+
+**Protocol.** LOBBY_VERSION 4 (3 was the first tournaments; 4 adds the rejoin). STATE (608 bytes, then 616) carries after the lobby the mode and the bracket: state, size,
+number of entrants, the Entrants rule, the seconds left of each held place (bytes 608 to 615, 616 bytes now), the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
 and names, the leaves, each match's winner and how it was decided (bye, walkover, played), who left. ALIVE (40 bytes)
-carries the match whose result the member has and the result. Nothing else changed; the two players' traffic and the
-spectators' are as before. A game of 0.1.38.9 (lobby version 2) that joins a new lobby is told "The lobby owner's game
+carries the match whose result the member has and the result; HELLO (80 bytes) a rejoin token and its tournament's
+number after the name; TOKEN (type 41, owner to one member) keeps or forgets one. Nothing else changed; the two players' traffic and the
+spectators' are as before. A game of 0.1.38.9 (lobby version 2), or of 3aec403 (3), that joins a new lobby is told "The lobby owner's game
 is a different version: joining needs the same release.", and so is a new game joining a 0.1.38.9 lobby.
 
 **Text.** All of it is in port_tbo.c (the page, the buttons, the box's lines, the round names), so

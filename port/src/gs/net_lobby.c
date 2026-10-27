@@ -25,6 +25,7 @@
  *   CHAT    member -> owner   {id, number, length, text}; the owner passes each line on to all (SAID)
  *   SAID    owner -> member   {number, length, name, text}
  *   INVITE  owner -> a game that knocked with the greeting of a match of two (by address): "this is a lobby"
+ *   TOKEN   owner -> one member {tournament, 1 keep / 2 forget, entrant, token, code}: its own rejoin token (below)
  * LOBBY_VERSION 3 (tournaments): STATE carries the lobby's mode and the tournament's bracket after the words it had
  * (608 bytes), ALIVE the result of the last match this member was in (a game of version 2 is told the versions differ).
  *
@@ -38,7 +39,16 @@
  * players agree on a winner, marks it, says so and ends the match (everyone back to the lobby, the bracket advanced).
  * Two different results, a draw, or a match that ends without one (the owner went back, the players could not connect,
  * one result and not the other within 20 s): the match is played again. An entrant who leaves the lobby loses its
- * match now or next by walkover.
+ * match now or next by walkover; one whose game falls silent (a lost connection, a crash) keeps its place for 90 s
+ * (HOLD_NS): it gets back in by joining with the code again, its greeting carrying the entrant's rejoin token. The
+ * owner draws a token (128 bits, the system's random source) for each entrant and sends it to that member alone
+ * (TOKEN, with every STATE), which keeps it in memory and in lobby_rejoin.txt beside its settings file (a crash or a
+ * start again keeps it). A greeting with the token of an entrant whose place is held (or whose member is still there
+ * but silent: dropped at once) puts the newcomer in that entrant's place and gives it a new token; the match the drop
+ * broke is played again from its start. The owner forgets a token when its entrant is out, leaves on purpose, runs
+ * out of the 90 s, rejoins (a new one), and when the tournament ends; it then tells the member to forget it
+ * (TOKEN 2), as it does when the lobby closes (CLOSE). A member also forgets it when it leaves on purpose, when the
+ * lobby it greets does not answer, and at start when the file is older than an hour.
  * A game of 0.1.38.7 or older that knocks by address is answered as a host of another release would answer it (it
  * says so); with the room code the matchmaking service tells it to update (port/matchmaking).
  *
@@ -62,6 +72,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -77,8 +88,8 @@
 
 #define MAGIC 0x4E335442u
 enum { T_HELLO = 1, T_HELLO_ACK = 2, T_SPEC_HELLO = 20 };
-enum { T_L_HELLO = 30, T_L_NO, T_L_STATE, T_L_ALIVE, T_L_GO, T_L_BACK, T_L_LEAVE, T_L_CLOSE, T_L_CHAT, T_L_SAID, T_L_INVITE };
-enum { LOBBY_VERSION = 3, /* 2: STATE carries the member's nonce (its greeting's), which a member connecting asks for; 3: the tournament */ FP_MARK = 0x46505231, LOBBY_CAP = 0x4C4F4231 /* "1BOL": a game's 1v1 greeting says it knows lobbies */ };
+enum { T_L_HELLO = 30, T_L_NO, T_L_STATE, T_L_ALIVE, T_L_GO, T_L_BACK, T_L_LEAVE, T_L_CLOSE, T_L_CHAT, T_L_SAID, T_L_INVITE, T_L_TOKEN };
+enum { LOBBY_VERSION = 4, /* 2: STATE carries the member's nonce (its greeting's), which a member connecting asks for; 3: the tournament; 4: rejoining it (TOKEN) */ FP_MARK = 0x46505231, LOBBY_CAP = 0x4C4F4231 /* "1BOL": a game's 1v1 greeting says it knows lobbies */ };
 enum { LNO_VERSION = 1, LNO_DATA = 2, LNO_FULL = 3 };
 enum { CLOSE_CLOSED = 1, CLOSE_KICKED = 2 };
 #define NOTE 96
@@ -89,7 +100,10 @@ enum { CLOSE_CLOSED = 1, CLOSE_KICKED = 2 };
 #define CONNECT_NS (25 * SEC)  /* a member that has not reached the owner in this long gives up */
 #define MATCH_CONNECT_NS (40 * SEC) /* the two players have not connected to each other in this long: back to the lobby */
 #define RESULT_WAIT_NS (20 * SEC)  /* a tournament's match: one player's result and not the other's this long: played again */
-#define STATE_BYTES 608            /* STATE: the lobby (372 bytes), then the mode and the bracket (tour_put) */
+#define STATE_BYTES 616            /* STATE: the lobby (372 bytes), then the mode and the bracket (tour_put) */
+#define HOLD_NS (90 * SEC)         /* a tournament's entrant whose game fell silent keeps its place this long (a rejoin) */
+#define TOKEN 16                   /* a rejoin token's bytes */
+#define HELLO_BYTES (40 + NAMEB + 4 + TOKEN) /* (the token after the name, with its tournament's number) */
 #define TOUR LOBBY_TOUR
 
 extern int NetIo_Version(void);
@@ -111,6 +125,8 @@ typedef struct {
     uint64_t goSentNs, joinedNs;
     uint32_t chatSeq;
     int claimed;               /* (room codes: it is known to be one of the members the service told of) */
+    int tokFor;                /* the entrant whose token it was sent + 1 (0 none), */
+    int forgetLeft;            /* ... and how many more times it is told to forget it */
     uint32_t resGen;           /* what it says: the match whose result it has, */
     int res;                   /* ... and the result (RES_) */
 } Member;
@@ -133,7 +149,22 @@ typedef struct {
     int playing;               /* the match on now (-1 none) */
     int side[2];               /* ... its entrants on sides 0 (1P, the host) and 1 */
     uint64_t oneResNs;         /* ... when one player's result came and not the other's (0 not yet) */
+    uint8_t tok[TOUR][TOKEN];  /* the owner: each entrant's rejoin token (memory only), */
+    int hasTok[TOUR];
+    uint64_t dropNs[TOUR];     /* ... when its game was found silent (0: not; its place held for HOLD_NS) */
+    int dropPlace[TOUR];       /* ... and the place it had then */
+    int dropSecs[TOUR];        /* both: the seconds of the hold left (0 none), as the bracket shows them */
 } Tour;
+
+/* A member: its rejoin token, kept over lobbies and in a file over a start again of the program (tok_file). */
+static struct {
+    int has;
+    uint32_t gen;
+    uint8_t tok[TOKEN];
+    char code[8];
+    int loaded;
+} sTok;
+static char sJoinCode[8];      /* the code this member joined with ("" by address) */
 
 typedef struct {
     int kind;
@@ -396,6 +427,7 @@ static void view_update(int force) {
         int on = sView.tour != 0 && i < sL.t.count;
         SDL_strlcpy(sView.tourName[i], on ? sL.t.name[i] : "", LOBBY_NAME);
         sView.tourGone[i] = on && sL.t.gone[i];
+        sView.tourDrop[i] = on && !sL.t.gone[i] ? sL.t.dropSecs[i] : 0;
         sView.tourLeaf[i] = sView.tour != 0 && i < sL.t.size ? sL.t.leaf[i] : -1;
         if (on && sL.t.id[i] == sL.myId && sL.myId != 0) {
             sView.tourMe = i;
@@ -556,7 +588,7 @@ static void log_table(void) {
 /* The mode and the bracket, in STATE after the lobby (bytes 372 on): words 93 mode | state << 8 | size << 16 |
    count << 24, 94 the tournament's number, 95 the shuffle's seed, 96 the next match, the champion and the match on
    (a byte each, 0xFF none) and the Entrants rule, 97..104 the entrants' ids; their names from byte 420 (8 x 20), the leaves from 580 (8
-   bytes, 0xFF a bye), the matches' winners from 588 (7) and how from 595 (7), at 602 who left (a bit each). */
+   bytes, 0xFF a bye), the matches' winners from 588 (7) and how from 595 (7), at 602 who left (a bit each), from 608 the seconds left of a held place (8). */
 static void tour_put(uint8_t *p) {
     int i;
     put(p, 93, (uint32_t)sL.mode | (uint32_t)sL.t.state << 8 | (uint32_t)sL.t.size << 16 | (uint32_t)sL.t.count << 24);
@@ -573,6 +605,9 @@ static void tour_put(uint8_t *p) {
     for (i = 0; i < TOUR - 1; i++) {
         p[588 + i] = (uint8_t)sL.t.win[i];
         p[595 + i] = (uint8_t)sL.t.how[i];
+    }
+    for (i = 0; i < TOUR; i++) {
+        p[608 + i] = (uint8_t)(sL.t.dropSecs[i] < 255 ? sL.t.dropSecs[i] : 255); /* (a held place's seconds left) */
     }
 }
 
@@ -607,6 +642,9 @@ static void tour_get(const uint8_t *p) {
         sL.t.win[i] = win >= 0 && win < count ? win : -1;
         sL.t.how[i] = p[595 + i] <= HOW_PLAYED ? p[595 + i] : 0;
     }
+    for (i = 0; i < TOUR; i++) {
+        sL.t.dropSecs[i] = p[608 + i];
+    }
     if (sL.t.cur >= size - 1) { sL.t.cur = -1; }
     if (sL.t.champ >= count) { sL.t.champ = -1; }
     if (sL.t.playing >= size - 1) { sL.t.playing = -1; }
@@ -638,12 +676,15 @@ static void state_send(int k) {
     send_to(p, (int)sizeof(p), &sL.m[k].addr);
 }
 
+static void token_send(int k);
+
 static void state_all(void) {
     int k;
     sL.seq++;
     for (k = 1; k < LOBBY_SLOTS; k++) {
         if (sL.m[k].on) {
             state_send(k);
+            token_send(k);
         }
     }
     sL.stateNs = now_ns();
@@ -815,6 +856,66 @@ static void match_end(const char *note) {
 
 /* ---- the owner's tournament ---- */
 
+/* Entrant e has lost a match (it is out). */
+static int t_out(int e) {
+    int m;
+    for (m = 0; m < t_matches(); m++) {
+        if (sL.t.win[m] >= 0 && sL.t.win[m] != e && (t_part(m, 0) == e || t_part(m, 1) == e)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void tok_draw(int e) { /* a new rejoin token for entrant e: 128 bits of the system's random source */
+    int i;
+    for (i = 0; i < TOKEN / 4; i++) {
+        uint32_t v = os_random32();
+        memcpy(sL.t.tok[e] + i * 4, &v, 4);
+    }
+    sL.t.hasTok[e] = 1;
+}
+
+/* The tokens no longer needed, forgotten: the entrant is out or gone, the tournament is over or off. */
+static void t_tokens(void) {
+    int e;
+    for (e = 0; e < TOUR; e++) {
+        if (sL.t.hasTok[e] && (sL.t.state != 1 || e >= sL.t.count || sL.t.gone[e] || t_out(e))) {
+            sL.t.hasTok[e] = 0;
+            memset(sL.t.tok[e], 0, TOKEN);
+            fprintf(stderr, "bt3: lobby: entrant %d's rejoin token forgotten\n", e);
+        }
+    }
+}
+
+/* Member k's own token (TOKEN 1), or the word to forget the one it had (TOKEN 2, ten times). With each STATE. */
+static void token_send(int k) {
+    uint8_t p[20 + TOKEN + 8];
+    int e;
+    memset(p, 0, sizeof(p));
+    put(p, 0, MAGIC);
+    put(p, 1, T_L_TOKEN);
+    put(p, 2, sL.t.gen);
+    for (e = 0; e < sL.t.count && !(sL.t.state == 1 && sL.t.hasTok[e] && sL.t.id[e] == sL.m[k].id); e++) {
+    }
+    if (sL.t.state == 1 && e < sL.t.count) {
+        put(p, 3, 1);
+        put(p, 4, (uint32_t)e);
+        memcpy(p + 20, sL.t.tok[e], TOKEN);
+        memcpy(p + 20 + TOKEN, sL.code, 8);
+        sL.m[k].tokFor = e + 1;
+        sL.m[k].forgetLeft = 10;
+    } else if (sL.m[k].tokFor != 0 && sL.m[k].forgetLeft > 0) {
+        put(p, 3, 2);
+        if (--sL.m[k].forgetLeft == 0) {
+            sL.m[k].tokFor = 0;
+        }
+    } else {
+        return;
+    }
+    send_to(p, (int)sizeof(p), &sL.m[k].addr);
+}
+
 static void t_log(void) {
     char line[256];
     size_t at = 0;
@@ -865,6 +966,7 @@ static void t_resolve(void) {
         SDL_snprintf(text, sizeof(text), "%s is the champion!", sL.t.name[sL.t.champ]);
         note_set(text);
     }
+    t_tokens();
     sL.dirty = 1;
     t_log();
 }
@@ -927,6 +1029,9 @@ static void t_new(void) {
     for (i = 0; i < TOUR - 1; i++) {
         sL.t.win[i] = -1;
     }
+    for (i = 0; i < n; i++) {
+        tok_draw(i);
+    }
     {
         char text[NOTE];
         SDL_snprintf(text, sizeof(text), "Tournament: %d entrants", n);
@@ -948,9 +1053,16 @@ static int member_by_id(uint32_t id) {
 
 /* The tournament's next match: its two put in 1P and 2P (the first of the match on the left of the bracket in
    1P), and begun. */
+/* The next match can begin: both its entrants are in the lobby (not one whose place is held). */
+static int t_can_start(void) {
+    int m = sL.t.cur;
+    return sL.t.state == 1 && m >= 0 && sL.phase == 0 && t_part(m, 0) >= 0 && t_part(m, 1) >= 0 && member_by_id(sL.t.id[t_part(m, 0)]) >= 0 &&
+           member_by_id(sL.t.id[t_part(m, 1)]) >= 0;
+}
+
 static void t_start(void) {
     int m = sL.t.cur, e[2], s, k;
-    if (sL.t.state != 1 || m < 0 || sL.phase != 0) {
+    if (!t_can_start()) {
         return;
     }
     e[0] = t_part(m, 0);
@@ -1022,24 +1134,91 @@ static void t_decide(void) {
     }
 }
 
-/* An entrant left the lobby: its match now, or its next, is lost by walkover. */
-static void t_gone(uint32_t id) {
-    int e;
-    if (sL.t.state != 1) {
-        return;
+/* Entrant e is gone: its match now, or its next, is lost by walkover. */
+static void t_gone_e(int e) {
+    sL.t.gone[e] = 1;
+    sL.t.dropNs[e] = 0;
+    sL.t.dropSecs[e] = 0;
+    if (sL.t.playing >= 0 && (sL.t.side[0] == e || sL.t.side[1] == e)) {
+        sL.t.playing = -1; /* (decided by the walkover below, not played again) */
     }
-    for (e = 0; e < sL.t.count; e++) {
+    t_resolve();
+}
+
+/* The entrant of member id (-1 none, or not in the tournament any more). */
+static int t_entrant(uint32_t id) {
+    int e;
+    for (e = 0; sL.t.state == 1 && e < sL.t.count; e++) {
         if (sL.t.id[e] == id && !sL.t.gone[e]) {
-            sL.t.gone[e] = 1;
-            if (sL.t.playing >= 0 && (sL.t.side[0] == e || sL.t.side[1] == e)) {
-                sL.t.playing = -1; /* (decided by the walkover below, not played again) */
+            return e;
+        }
+    }
+    return -1;
+}
+
+/* An entrant left the lobby on purpose (or was removed): walkover. */
+static void t_gone(uint32_t id) {
+    int e = t_entrant(id);
+    if (e >= 0) {
+        t_gone_e(e);
+    }
+}
+
+/* An entrant's game fell silent: its place is held for HOLD_NS (a rejoin with its token), unless it is out already. */
+static int t_hold(int k, int place) {
+    int e = t_entrant(sL.m[k].id);
+    char text[NOTE];
+    if (e < 0 || t_out(e) || !sL.t.hasTok[e]) {
+        return 0;
+    }
+    sL.t.dropNs[e] = now_ns();
+    sL.t.dropPlace[e] = place;
+    sL.t.dropSecs[e] = (int)(HOLD_NS / SEC);
+    SDL_snprintf(text, sizeof(text), "%s lost the connection: the place is held for 90 s", sL.t.name[e]);
+    note_set(text);
+    return 1;
+}
+
+/* The holds that ran out: walkover; the seconds left, for the bracket. */
+static void t_holds(void) {
+    uint64_t now = now_ns();
+    int e;
+    for (e = 0; sL.t.state == 1 && e < sL.t.count; e++) {
+        if (sL.t.dropNs[e] != 0) {
+            uint64_t held = now - sL.t.dropNs[e];
+            int left = held >= HOLD_NS ? 0 : (int)((HOLD_NS - held + SEC - 1) / SEC);
+            if (left != sL.t.dropSecs[e]) {
+                sL.t.dropSecs[e] = left;
+                sL.dirty = 1;
             }
-            t_resolve();
+            if (left == 0) {
+                char text[NOTE];
+                SDL_snprintf(text, sizeof(text), "%s did not come back in time", sL.t.name[e]);
+                note_set(text);
+                t_gone_e(e);
+            }
         }
     }
 }
 
-static void member_drop(int k, const char *why) {
+/* A greeting with a rejoin token: the entrant it belongs to (-1 none). */
+static int t_token_owner(const uint8_t *tok, uint32_t gen) {
+    static const uint8_t zero[TOKEN];
+    int e;
+    if (memcmp(tok, zero, TOKEN) == 0 || gen != sL.t.gen) {
+        return -1;
+    }
+    for (e = 0; sL.t.state == 1 && e < sL.t.count; e++) {
+        if (sL.t.hasTok[e] && !sL.t.gone[e] && memcmp(sL.t.tok[e], tok, TOKEN) == 0) {
+            return e;
+        }
+    }
+    return -1;
+}
+
+/* Member k is gone: on purpose (LEAVE, removed), or its game fell silent (`lost`: a tournament's entrant keeps its
+   place for a while, t_hold). */
+static void member_drop(int k, const char *why, int lost) {
     char text[NOTE];
     int s = member_place(k), player = sL.phase == 1 && (k == sL.players[0] || k == sL.players[1]);
     SDL_snprintf(text, sizeof(text), "%s %s", sL.m[k].name, why);
@@ -1048,9 +1227,11 @@ static void member_drop(int k, const char *why) {
         sL.slot[s] = -1;
     }
     table_make();
-    note_set(text);
+    if (!(lost && t_hold(k, s))) {
+        note_set(text);
+        t_gone(sL.m[k].id);
+    }
     log_table();
-    t_gone(sL.m[k].id);
     if (player) {
         match_end(NULL);
     }
@@ -1059,9 +1240,18 @@ static void member_drop(int k, const char *why) {
 static void owner_hello(const uint8_t *pkt, int n, const struct sockaddr_in *from) {
     uint32_t why = 0, nonce = n >= 32 ? get(pkt, 7) : 0;
     unsigned long long mine;
-    int k, free = -1, s;
+    int k, free = -1, s, back = n >= HELLO_BYTES ? t_token_owner(pkt + 40 + NAMEB + 4, get(pkt, (40 + NAMEB) / 4)) : -1;
     if (n < 40 + NAMEB) {
         return;
+    }
+    if (back >= 0 && sL.t.dropNs[back] == 0 && get(pkt, 2) == LOBBY_VERSION) {
+        /* the entrant's game greets again from somewhere new (it was started again) while its old one is not yet
+           found silent: that one is dropped now, the place held */
+        for (k = 1; k < LOBBY_SLOTS; k++) {
+            if (sL.m[k].on && sL.m[k].id == sL.t.id[back] && !same(&sL.m[k].addr, from)) {
+                member_drop(k, "lost the connection to the lobby", 1);
+            }
+        }
     }
     if (get(pkt, 2) != LOBBY_VERSION || get(pkt, 3) != (uint32_t)NetIo_Version()) {
         why = LNO_VERSION;
@@ -1102,8 +1292,9 @@ static void owner_hello(const uint8_t *pkt, int n, const struct sockaddr_in *fro
         SDL_strlcpy(sL.m[free].name, "Player", NAMEB);
     }
     sL.m[free].heardNs = now_ns();
-    /* the first free place: a player's while one is free and no match is on, else a spectator's */
-    for (s = sL.phase == 1 ? 2 : 0; s < LOBBY_SLOTS && sL.slot[s] >= 0; s++) {
+    /* the first free place: a player's while one is free and no match is on, else a spectator's (while a tournament is
+       on, a spectator's: its entrants are drawn already) */
+    for (s = sL.mode == 1 && sL.t.state == 1 ? sL.entrants : sL.phase == 1 ? 2 : 0; s < LOBBY_SLOTS && sL.slot[s] >= 0; s++) {
     }
     if (s == LOBBY_SLOTS) {
         for (s = 0; s < LOBBY_SLOTS && sL.slot[s] >= 0; s++) {
@@ -1134,6 +1325,27 @@ static void owner_hello(const uint8_t *pkt, int n, const struct sockaddr_in *fro
         char text[NOTE];
         SDL_snprintf(text, sizeof(text), "%s joined the lobby", sL.m[free].name);
         note_set(text);
+    }
+    if (back >= 0 && sL.t.dropNs[back] != 0) { /* a held entrant back, by its token: its place again, a new token */
+        char text[NOTE];
+        int p = sL.t.dropPlace[back];
+        if (p >= 0 && p < LOBBY_SLOTS && p != s) {
+            int t = sL.slot[p];
+            sL.slot[p] = free;
+            sL.slot[s] = t;
+        }
+        sL.t.id[back] = sL.m[free].id;
+        sL.t.dropNs[back] = 0;
+        sL.t.dropSecs[back] = 0;
+        tok_draw(back);
+        table_make();
+        SDL_snprintf(text, sizeof(text), "%s is back in the tournament", sL.m[free].name);
+        note_set(text);
+        fprintf(stderr, "bt3: lobby: entrant %d back by its token (a new one drawn)\n", back);
+    } else if (n >= HELLO_BYTES && get(pkt, (40 + NAMEB) / 4) != 0) {
+        fprintf(stderr, "bt3: lobby: a greeting with a rejoin token that is no entrant's now: a member as any other, told to forget it\n");
+        sL.m[free].tokFor = 1;
+        sL.m[free].forgetLeft = 10;
     }
     log_table();
     state_all();
@@ -1177,7 +1389,7 @@ static void owner_packet(const uint8_t *pkt, int n, const struct sockaddr_in *fr
             sL.dirty = 1;
         }
     } else if (type == T_L_LEAVE) {
-        member_drop(k, "left the lobby");
+        member_drop(k, "left the lobby", 0);
     } else if (type == T_L_CHAT && n >= 20) {
         uint32_t seq = get(pkt, 3), len = get(pkt, 4);
         if (seq > sL.m[k].chatSeq && len <= TEXT && 20 + len <= (uint32_t)n) {
@@ -1239,6 +1451,9 @@ static void owner_do(int what, int a, int b) {
         if (sL.phase == 0 && sL.t.state == 1) {
             sL.t.state = 0;
             sL.t.cur = sL.t.playing = -1;
+            memset(sL.t.dropNs, 0, sizeof(sL.t.dropNs));
+            memset(sL.t.dropSecs, 0, sizeof(sL.t.dropSecs));
+            t_tokens();
             note_set("The tournament was called off.");
         }
     } else if (what == LOBBY_BACK) {
@@ -1251,7 +1466,7 @@ static void owner_do(int what, int a, int b) {
             for (r = 0; r < 3; r++) {
                 close_send(&sL.m[k].addr, CLOSE_KICKED, "The lobby's owner removed you from the lobby.");
             }
-            member_drop(k, "was removed from the lobby");
+            member_drop(k, "was removed from the lobby", 0);
         }
     } else if (what == LOBBY_MOVE) {
         if (sL.phase == 0 && a >= 0 && a < LOBBY_SLOTS && b >= 0 && b < LOBBY_SLOTS && a != b) {
@@ -1306,8 +1521,112 @@ static void owner_do(int what, int a, int b) {
 
 /* ---- a member ---- */
 
+/* The member's rejoin token on disk: lobby_rejoin.txt beside the settings file (no settings file: none). */
+static const char *tok_path(void) {
+    static char path[600];
+    const char *set = getenv("BT3_SETTINGS"), *slash;
+    size_t n;
+    if (set != NULL && set[0] == '\0') {
+        return NULL;
+    }
+    if (set == NULL) {
+        return "lobby_rejoin.txt";
+    }
+    slash = strrchr(set, '/');
+#ifdef _WIN32
+    if (strrchr(set, '\\') != NULL && (slash == NULL || strrchr(set, '\\') > slash)) {
+        slash = strrchr(set, '\\');
+    }
+#endif
+    n = slash != NULL ? (size_t)(slash - set + 1) : 0;
+    if (n + 20 > sizeof(path)) {
+        return NULL;
+    }
+    memcpy(path, set, n);
+    strcpy(path + n, "lobby_rejoin.txt");
+    return path;
+}
+
+static void tok_forget(const char *why) {
+    const char *path = tok_path();
+    if (sTok.has) {
+        fprintf(stderr, "bt3: lobby: the rejoin token is forgotten (%s)\n", why);
+    }
+    memset(&sTok, 0, sizeof(sTok));
+    sTok.loaded = 1;
+    if (path != NULL) {
+        remove(path);
+    }
+}
+
+static void tok_keep(uint32_t gen, const uint8_t *tok, const char *code) {
+    const char *path = tok_path();
+    FILE *f;
+    int i;
+    sTok.has = 1;
+    sTok.loaded = 1;
+    sTok.gen = gen;
+    memcpy(sTok.tok, tok, TOKEN);
+    memcpy(sTok.code, code, 8);
+    sTok.code[7] = '\0';
+    name_clean(sTok.code, 8);
+    f = path != NULL ? fopen(path, "w") : NULL;
+    if (f != NULL) {
+        fprintf(f, "bt3 lobby rejoin 1\n%lld\n%s\n%u\n", (long long)time(NULL), sTok.code[0] != '\0' ? sTok.code : "-", (unsigned)gen);
+        for (i = 0; i < TOKEN; i++) {
+            fprintf(f, "%02x", sTok.tok[i]);
+        }
+        fprintf(f, "\n");
+        fclose(f);
+    }
+    fprintf(stderr, "bt3: lobby: a rejoin token kept for tournament %u (lobby %s)\n", (unsigned)gen, sTok.code);
+}
+
+/* At the program's start (the first lobby blank): the token of a game that crashed or was closed in a tournament,
+   if it is less than an hour old; an older file is removed. */
+static void tok_load(void) {
+    const char *path;
+    FILE *f;
+    char head[32], code[16];
+    long long when;
+    unsigned gen;
+    char hex[2 * TOKEN + 2];
+    int i, ok = 0;
+    if (sTok.loaded) {
+        return;
+    }
+    sTok.loaded = 1;
+    path = tok_path();
+    f = path != NULL ? fopen(path, "r") : NULL;
+    if (f == NULL) {
+        return;
+    }
+    if (fgets(head, sizeof(head), f) != NULL && strncmp(head, "bt3 lobby rejoin 1", 18) == 0 &&
+        fscanf(f, "%lld %15s %u %34s", &when, code, &gen, hex) == 4 && strlen(hex) == 2 * TOKEN) {
+        long long age = (long long)time(NULL) - when;
+        ok = age >= 0 && age < 3600;
+        for (i = 0; ok && i < TOKEN; i++) {
+            unsigned v;
+            ok = sscanf(hex + 2 * i, "%2x", &v) == 1;
+            sTok.tok[i] = (uint8_t)v;
+        }
+        if (!ok) {
+            fprintf(stderr, "bt3: lobby: the rejoin token file is %lld s old: removed\n", age);
+        }
+    }
+    fclose(f);
+    if (!ok) {
+        tok_forget("old or not readable");
+        return;
+    }
+    sTok.has = 1;
+    sTok.gen = gen;
+    SDL_strlcpy(sTok.code, strcmp(code, "-") == 0 ? "" : code, sizeof(sTok.code));
+    fprintf(stderr, "bt3: lobby: a rejoin token from before (lobby %s, tournament %u)\n", sTok.code, gen);
+}
+
 static void hello_send(const struct sockaddr_in *to) {
-    uint8_t p[40 + NAMEB];
+    uint8_t p[HELLO_BYTES];
     unsigned long long fp = 0;
     struct sockaddr_in self;
     char text[64], *colon;
@@ -1333,6 +1652,15 @@ static void hello_send(const struct sockaddr_in *to) {
     put(p, 7, sL.nonce);
     addr_put(p, 8, &self);
     SDL_strlcpy((char *)p + 40, NetIo_MyName(), NAMEB);
+    if (sTok.has && strcmp(sTok.code, sJoinCode) == 0) { /* (its own lobby's only) */
+        static uint32_t said;
+        put(p, (40 + NAMEB) / 4, sTok.gen);
+        memcpy(p + 40 + NAMEB + 4, sTok.tok, TOKEN);
+        if (said != sL.nonce) {
+            said = sL.nonce;
+            fprintf(stderr, "bt3: lobby: the greeting carries this game's rejoin token\n");
+        }
+    }
     send_to(p, (int)sizeof(p), to);
 }
 
@@ -1526,11 +1854,19 @@ static void member_packet(const uint8_t *pkt, int n, const struct sockaddr_in *f
         memcpy(note, pkt + 12, NOTE);
         name_clean(note, NOTE);
         sL.closedBy = 1;
+        tok_forget("the lobby is closed");
         SDL_strlcpy(sL.error, get(pkt, 2) == CLOSE_KICKED ? "The lobby's owner removed you from the lobby." : "The lobby was closed by its owner.", sizeof(sL.error));
         if (NetIo_SessionMode() != 0 || NetIo_SessionStarting()) {
             NetIo_End(4, sL.error);
         } else {
             member_closed(sL.error);
+        }
+    } else if (type == T_L_TOKEN && n >= 20 + TOKEN + 8) {
+        uint32_t what = get(pkt, 3);
+        if (what == 1 && (!sTok.has || sTok.gen != get(pkt, 2) || memcmp(sTok.tok, pkt + 20, TOKEN) != 0)) {
+            tok_keep(get(pkt, 2), pkt + 20, (const char *)pkt + 20 + TOKEN);
+        } else if (what == 2 && sTok.has) {
+            tok_forget("the owner says it is not needed");
         }
     } else if (type == T_L_SAID && n >= 16 + NAMEB) {
         uint32_t seq = get(pkt, 2), len = get(pkt, 3);
@@ -1766,7 +2102,7 @@ static void timers(void) {
                 continue;
             }
             if (now > m->heardNs && now - m->heardNs > QUIET_NS) {
-                member_drop(k, "lost the connection to the lobby");
+                member_drop(k, "lost the connection to the lobby", 1);
                 continue;
             }
             if (sL.phase == 1) {
@@ -1786,6 +2122,7 @@ static void timers(void) {
             }
         }
         t_decide();
+        t_holds();
         if (sL.phase == 1 && now - sL.goNs > MATCH_CONNECT_NS) {
             int a = sL.players[0], b = sL.players[1];
             int ok = (a == 0 ? NetIo_Connected() : sL.m[a].connected) && (b == 0 ? NetIo_Connected() : sL.m[b].connected);
@@ -1816,6 +2153,9 @@ static void timers(void) {
                 }
             }
             if (now - sL.candSince > CONNECT_NS) {
+                if (sTok.has && strcmp(sTok.code, sJoinCode) == 0) {
+                    tok_forget("its lobby does not answer");
+                }
                 member_closed("The lobby's owner did not answer. A firewall on the owner's PC may be blocking the game: "
                               "allow Tenkaichi3Decomp through it (Windows Firewall: allow an app), then try again.");
                 return;
@@ -1880,6 +2220,7 @@ static void do_cmd(const Cmd *c) {
         } else {
             uint32_t p[3] = {MAGIC, T_L_LEAVE, sL.myId};
             sL.leaving = 1;
+            tok_forget("left on purpose");
             fprintf(stderr, "bt3: lobby: leaving the lobby\n");
             for (r = 0; r < 3; r++) {
                 send_to(p, sizeof(p), &sL.owner);
@@ -2017,6 +2358,7 @@ static void join_found(const char addrs[][64], int count, const char *code, cons
     sL.candCount = n;
     sL.candRelay = relay;
     SDL_strlcpy(sL.self, self != NULL ? self : "", sizeof(sL.self));
+    SDL_strlcpy(sJoinCode, code, sizeof(sJoinCode));
     member_start();
     fprintf(stderr, "bt3: lobby: the code is a lobby's: joining it (the owner at");
     for (i = 0; i < sL.candCount; i++) {
@@ -2052,6 +2394,7 @@ static void join_address_found(const struct sockaddr_in *owner) {
     sL.candCount = 1;
     sL.candRelay = -1;
     sL.self[0] = '\0';
+    sJoinCode[0] = '\0';
     member_start();
     fprintf(stderr, "bt3: lobby: the address is a lobby's: joining it\n");
 }
@@ -2180,7 +2523,7 @@ static void script(void) {
         } else if (strncmp(c, "tour", 4) == 0) {
             Port_LobbyDo(LOBBY_TOUR_NEW, 0, 0);
         } else if (strncmp(c, "next", 4) == 0) {
-            done = sL.on == 1 && sL.t.state == 1 && sL.t.cur >= 0 && sL.phase == 0 && NetIo_SessionMode() == 0 && !NetIo_SessionStarting();
+            done = sL.on == 1 && t_can_start() && NetIo_SessionMode() == 0 && !NetIo_SessionStarting();
             if (done) {
                 owner_do(LOBBY_START, 0, 0);
             }
@@ -2276,6 +2619,7 @@ void Lobby_Pump(void) {
     uint8_t pkt[2048];
     struct sockaddr_in from;
     int n;
+    tok_load();
     {
         static int begun;
         const char *e = getenv("BT3_LOBBY");

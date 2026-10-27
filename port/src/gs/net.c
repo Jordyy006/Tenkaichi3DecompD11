@@ -3260,6 +3260,7 @@ static int sCodeMode, sCodeAddrs;
 static int sCodeRelay = -1; /* which of sCodeAddr is the host's relay address (the one who joins) */
 static int sCodeVia;        /* the match was reached through the relay (for the window) */
 static struct sockaddr_in sCodeSeen; /* the address the service saw the other player under (for the relay's permission) */
+static char sCodeAsked[16]; /* the code this game asked the service for (a lobby's: its member keeps it, net_lobby.c) */
 static int sCodeSeenSet, sCodeGen, sCodeRelayGen; /* ... and which of the search's later news the lobby has taken in */
 
 int Port_LobbyRelayed(void) { return sCodeVia; }
@@ -3448,6 +3449,7 @@ int Port_LobbyStartCode(int host, const char *code) {
     Match_Watch(sLobbyRole == 1 && sQuickQueue < 0 && spec_allowed()); /* (a room of its own: spectators may come with its code) */
     sKnockGen = -1;
     memset(sKnockUntil, 0, sizeof(sKnockUntil));
+    snprintf(sCodeAsked, sizeof(sCodeAsked), "%s", sQuickQueue < 0 && code != NULL ? code : "");
     Match_Begin(sQuickQueue >= 0 ? 3 : sWatchByCode ? 4 : sLobbyRole, sSock, sCodeLocalPort, sQuickQueue >= 0 ? kMatchQueues[sQuickQueue] : code, sMyName, NET_VERSION);
     return sLobby;
 }
@@ -3637,7 +3639,7 @@ int Port_LobbyPoll(void) {
         } else if (st.state == 3 && st.lobby) {
             /* the code is a lobby's (the service said so): this game becomes its member (net_lobby.c), with this
                socket; the search's thread goes on asking for the owner's relay address meanwhile */
-            Lobby_JoinFound((const char (*)[64])st.peerAddr, st.peerCount, st.code, st.self);
+            Lobby_JoinFound((const char (*)[64])st.peerAddr, st.peerCount, st.code[0] != '\0' ? st.code : sCodeAsked, st.self);
             sCodeMode = 0;
             sLobby = 5;
         } else if (st.state == 3) {

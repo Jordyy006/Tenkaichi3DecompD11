@@ -1691,9 +1691,11 @@ static char *sTbLobbyLines[] = {
     "The players' results differ: the match will be played again.",
     "Only one player's result came: the match will be played again.",
 };
-#define TB_LOBBY_NAMED 7
+#define TB_LOBBY_NAMED 10
 static char *sTbLobbyNamed[TB_LOBBY_NAMED] = {"%s joined the lobby", "%s left the lobby", "%s was removed from the lobby", "%s lost the connection to the lobby",
-                                              "%s won the match", "%s won by walkover", "%s is the champion!"};
+                                              "%s won the match", "%s won by walkover", "%s is the champion!",
+                                              "%s lost the connection: the place is held for 90 s", "%s is back in the tournament",
+                                              "%s did not come back in time"};
 
 /* `fmt` (in the chosen language: Tb_Fmt) with its %s parts the names a, b and its %d the number. */
 static void Tb_Subst(char *out, s32 size, char *fmt, const char *a, const char *b, s32 num) {
@@ -1895,6 +1897,14 @@ static char *Tb_LobbyActName(s32 act) {
     return "";
 }
 
+/* A tournament's next match can begin: there is one, and neither of its two is away (a held place). */
+static s32 Tb_TourNextReady(void) {
+    PortLobbyView *v = &sTbLv;
+    s32 m = v->tourCur;
+
+    return m >= 0 && v->tourA[m] >= 0 && v->tourB[m] >= 0 && v->tourDrop[v->tourA[m]] == 0 && v->tourDrop[v->tourB[m]] == 0;
+}
+
 static s32 Tb_LobbyCanStart(void) {
     PortLobbyView *v = &sTbLv;
 
@@ -1902,7 +1912,7 @@ static s32 Tb_LobbyCanStart(void) {
         return 0;
     }
     if (v->mode) { /* a tournament: its next match; or a new one, of those in the player places */
-        return v->tour == 1 ? v->tourCur >= 0 : v->entrantCount >= 2;
+        return v->tour == 1 ? Tb_TourNextReady() : v->entrantCount >= 2;
     }
     return v->taken[0] && v->taken[1];
 }
@@ -1918,7 +1928,7 @@ static void Tb_LobbyStart(void) {
         Snd_PlaySe(1, 2);
         Tb_Note(v->phase ? "A MATCH IS ON ALREADY"
                 : !v->mode ? "TWO PLAYERS ARE NEEDED: ONE IN 1P, ONE IN 2P"
-                : v->tour == 1 ? "NO MATCH LEFT TO PLAY"
+                : v->tour == 1 ? (v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY")
                                : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
     }
 }
@@ -2928,7 +2938,7 @@ static char *Tb_BracketActName(s32 act) {
 static s32 Tb_BracketCanStart(void) {
     PortLobbyView *v = &sTbLv;
 
-    return v->owner && !v->phase && (v->tour == 1 ? v->tourCur >= 0 : v->mode && v->entrantCount >= 2);
+    return v->owner && !v->phase && (v->tour == 1 ? Tb_TourNextReady() : v->mode && v->entrantCount >= 2);
 }
 
 static void Tb_BracketOpen(void) {
@@ -2949,7 +2959,7 @@ static void Tb_BracketStart(void) {
         Port_LobbyDo(v->tour == 1 ? LOBBY_START : LOBBY_TOUR_NEW, 0, 0);
     } else {
         Snd_PlaySe(1, 2);
-        Tb_Note(v->phase ? "A MATCH IS ON ALREADY" : v->tour == 1 ? "NO MATCH LEFT TO PLAY" : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
+        Tb_Note(v->phase ? "A MATCH IS ON ALREADY" : v->tour == 1 ? (v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY") : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
     }
 }
 
@@ -3072,6 +3082,8 @@ static void Tb_DrawBracket(void) {
             Ps_Pill(TBO_KIT_BAR, x0, y - 11.0f, x1, y + 11.0f, 0x40);
         } else if (e == v->tourChamp) {
             Ps_Pill(TBO_KIT_GOLD, x0, y - 11.0f, x1, y + 11.0f, 0x80);
+        } else if (v->tourDrop[e] > 0) { /* (away: its place held) */
+            Ps_Pill(TBO_KIT_BAR, x0, y - 11.0f, x1, y + 11.0f, 0x58);
         } else if (focus >= 0 && (v->tourA[focus] == e || v->tourB[focus] == e)) {
             Ps_Pill(TBO_KIT_SEL, x0 - 2.0f, y - 13.0f, x1 + 2.0f, y + 13.0f, 0x80);
         } else {
@@ -3122,12 +3134,18 @@ static void Tb_DrawBracketText(void) {
         f32 x1 = half ? 512.0f - BR_LEAF_X0 : BR_LEAF_X1;
         s32 e = v->tourLeaf[l];
         s32 on = e >= 0 && focus >= 0 && (v->tourA[focus] == e || v->tourB[focus] == e) && e != v->tourChamp;
-        s32 tag = e >= 0 && (v->tourGone[e] || e == v->tourMe);
+        s32 tag = e >= 0 && v->tourDrop[e] == 0 && (v->tourGone[e] || e == v->tourMe);
         f32 room = x1 - x0 - (tag ? 50.0f : 24.0f);
 
         Ps_Align(half ? 2 : 0);
         if (e < 0) {
             Ps_Text(half ? x1 - 12.0f : x0 + 12.0f, Ps_TextTop(y, 0.5f), "BYE", 0.5f, 0.0f, 4);
+        } else if (v->tourDrop[e] > 0) { /* its game fell silent: the place is held, the time left under the name */
+            static char away[48];
+
+            sprintf(away, Tb_Fmt("DISCONNECTED %d:%02d"), (int)(v->tourDrop[e] / 60), (int)(v->tourDrop[e] % 60));
+            Ps_Text(half ? x1 - 12.0f : x0 + 12.0f, Ps_TextTop(y - 5.0f, 0.44f), v->tourName[e], 0.44f, x1 - x0 - 24.0f, 4);
+            Ps_Text(half ? x1 - 12.0f : x0 + 12.0f, Ps_TextTop(y + 6.0f, 0.38f), away, 0.38f, x1 - x0 - 24.0f, 1);
         } else {
             Ps_Text(half ? x1 - 12.0f : x0 + 12.0f, Ps_TextTop(y, 0.54f), v->tourName[e], 0.54f, room,
                     on ? 1 : v->tourGone[e] || Tb_BrOut(e) ? 4 : e == v->tourMe ? 3 : 0);
@@ -3184,7 +3202,13 @@ static char *Tb_BracketHelp(void) {
     Ps_Cat(line, " (", 224);
     Ps_Cat(line, Tb_Fmt(Tb_BrRoundName(m)), 224);
     Ps_Cat(line, ").", 224);
-    if (v->tourOn < 0) {
+    if (v->tourOn < 0 && (v->tourDrop[v->tourA[m]] > 0 || v->tourDrop[v->tourB[m]] > 0)) {
+        static char wait[96];
+
+        Tb_Subst(wait, 96, "Waiting for %s to come back.", v->tourName[v->tourDrop[v->tourA[m]] > 0 ? v->tourA[m] : v->tourB[m]], NULL, 0);
+        Ps_Cat(line, " ", 224);
+        Ps_Cat(line, wait, 224);
+    } else if (v->tourOn < 0) {
         Ps_Cat(line, " ", 224);
         Ps_Cat(line, Tb_Fmt(v->owner ? "Start it when both are here!" : "The owner starts it."), 224);
     }
