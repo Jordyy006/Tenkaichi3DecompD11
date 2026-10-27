@@ -4150,12 +4150,13 @@ joined as an ordinary member and was told to forget its token. A token file two 
 The bracket's DISCONNECTED countdown and the box's "Waiting for NAME to come back." were looked at. The Windows build
 compiles.
 
-**Protocol.** LOBBY_VERSION 4 (3 was the first tournaments; 4 adds the rejoin). STATE (608 bytes, then 616) carries after the lobby the mode and the bracket: state, size,
+**Protocol.** LOBBY_VERSION 3 (one step for all of the tournaments; on the `tournament` branch it had gone to 4 on the
+way, never released). STATE (620 bytes) carries after the lobby the mode and the bracket: state, size,
 number of entrants, the Entrants rule, the seconds left of each held place (bytes 608 to 615, 616 bytes now), the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
 and names, the leaves, each match's winner and how it was decided (bye, walkover, played), who left. ALIVE (40 bytes)
 carries the match whose result the member has and the result; HELLO (80 bytes) a rejoin token and its tournament's
 number after the name; TOKEN (type 41, owner to one member) keeps or forgets one. Nothing else changed; the two players' traffic and the
-spectators' are as before. A game of 0.1.38.9 (lobby version 2), or of 3aec403 (3), that joins a new lobby is told "The lobby owner's game
+spectators' are as before. A game of 0.1.38.9 (lobby version 2) that joins a new lobby is told "The lobby owner's game
 is a different version: joining needs the same release.", and so is a new game joining a 0.1.38.9 lobby.
 
 **Text.** All of it is in port_tbo.c (the page, the buttons, the box's lines, the round names), so
@@ -4267,3 +4268,22 @@ builds with a throw-away public key. `sh port/tests/update/run.sh`: 34 checks of
 
 Not tested: the real Windows (only wine), the restart into the new game on Windows, the real GitHub (its answer's
 shape was taken from its documentation; the stand-in serves the same fields).
+
+## Integration: fingerprints first, tournaments, automatic updates (2026-10-28)
+
+The branch `next` puts three branches on 0.1.38.9, in this order, with their commits as they were: `fp-early` (the
+fingerprint computed first; whose data may meet), `tournament` (the chapter "Tournaments"), `updater` (PR #107 by
+Joseph Llacchua and the commits on it; the chapter "Automatic updates"). Where they meet:
+
+- A lobby, and a tournament in it, obeys the data policy of "Online: whose data may meet": a member needs the owner's
+  data (modified or not), and a lobby is made or joined (a tournament's rejoin too) only once the game's own
+  fingerprint is known (net_lobby.c's queue waits).
+- While an update is being downloaded or waits to be installed no lobby is made or joined (net_lobby.c `online_ok`,
+  the same line as the rooms', "update/online_off"); Tenkaichi Budokai Online's `Tb_Vanilla` refuses before the data
+  check, `Port_LobbyStart` before it holds a start for the fingerprint. A lobby that is on goes on, and Restart now is
+  not offered during it (the updater's rule).
+- LOBBY_VERSION is 3: one step from 0.1.38.9's 2 for everything the tournaments add (STATE 620 bytes, ALIVE 40,
+  HELLO 80, TOKEN).
+- A member keeps the code it asked the service for (`sCodeAsked`), since the service's answer to a member has none:
+  the rejoin token goes only to the lobby of its own code.
+

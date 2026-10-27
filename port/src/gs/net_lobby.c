@@ -26,8 +26,8 @@
  *   SAID    owner -> member   {number, length, name, text}
  *   INVITE  owner -> a game that knocked with the greeting of a match of two (by address): "this is a lobby"
  *   TOKEN   owner -> one member {tournament, 1 keep / 2 forget, entrant, token, code}: its own rejoin token (below)
- * LOBBY_VERSION 3 (tournaments): STATE carries the lobby's mode and the tournament's bracket after the words it had
- * (608 bytes), ALIVE the result of the last match this member was in (a game of version 2 is told the versions differ).
+ * LOBBY_VERSION 3 (tournaments, all of it one step after 0.1.38.9's 2): STATE carries the lobby's mode and the tournament's bracket after the words it had
+ * (620 bytes), ALIVE the result of the last match this member was in, HELLO a rejoin token (a game of version 2 is told the versions differ).
  *
  * Tournaments (docs/port/README.md, "Tournaments"): the owner switches the lobby to Tournament (the first rule) and
  * draws a bracket of those in the player places, of which the Entrants rule makes 2 to 8 (empty ones are left out;
@@ -92,7 +92,7 @@
 #define MAGIC 0x4E335442u
 enum { T_HELLO = 1, T_HELLO_ACK = 2, T_SPEC_HELLO = 20 };
 enum { T_L_HELLO = 30, T_L_NO, T_L_STATE, T_L_ALIVE, T_L_GO, T_L_BACK, T_L_LEAVE, T_L_CLOSE, T_L_CHAT, T_L_SAID, T_L_INVITE, T_L_TOKEN };
-enum { LOBBY_VERSION = 4, /* 2: STATE carries the member's nonce (its greeting's), which a member connecting asks for; 3: the tournament; 4: rejoining it (TOKEN) */ FP_MARK = 0x46505231, LOBBY_CAP = 0x4C4F4231 /* "1BOL": a game's 1v1 greeting says it knows lobbies */ };
+enum { LOBBY_VERSION = 3, /* 2: STATE carries the member's nonce (its greeting's), which a member connecting asks for; 3: tournaments (the bracket in STATE, results in ALIVE, the rejoin token in HELLO, TOKEN) */ FP_MARK = 0x46505231, LOBBY_CAP = 0x4C4F4231 /* "1BOL": a game's 1v1 greeting says it knows lobbies */ };
 enum { LNO_VERSION = 1, LNO_DATA = 2, LNO_FULL = 3 };
 enum { CLOSE_CLOSED = 1, CLOSE_KICKED = 2 };
 #define NOTE 96
@@ -2596,6 +2596,22 @@ static int session_can(void) { /* a lobby's matches begin without a start again 
     return 0;
 }
 
+/* No lobby is made or joined while an update is being downloaded or waits to be installed (gs/net_update.c, net.c's
+   Port_OnlineBlocked): the others would soon be on another version. A lobby that is on goes on. */
+static int online_ok(void) {
+    extern const char *Port_OnlineBlocked(void);
+    const char *off = Port_OnlineBlocked();
+    if (off == NULL) {
+        return 1;
+    }
+    memset(&sL, 0, sizeof(sL));
+    SDL_strlcpy(sL.error, off, sizeof(sL.error));
+    sL.state = 3;
+    fprintf(stderr, "bt3: lobby: %s\n", off);
+    view_update(1);
+    return 0;
+}
+
 static void queue_run(void) {
     Cmd c[16];
     int n, i;
@@ -2622,11 +2638,11 @@ static void queue_run(void) {
     SDL_UnlockSpinlock(&sLock);
     for (i = 0; i < n; i++) {
         if (c[i].kind == CMD_CREATE) {
-            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can()) {
+            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can() && online_ok()) {
                 owner_start(c[i].a, c[i].b, c[i].text);
             }
         } else if (c[i].kind == CMD_JOIN_ADDR) {
-            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can()) {
+            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can() && online_ok()) {
                 if (c[i].a < 0) {
                     join_address_found(&c[i].owner);
                 } else {
@@ -2634,7 +2650,7 @@ static void queue_run(void) {
                 }
             }
         } else if (c[i].kind == CMD_JOIN_FOUND) {
-            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can()) {
+            if (sL.on == 0 && NetIo_SessionMode() == 0 && session_can() && online_ok()) {
                 join_found((const char (*)[64])c[i].addrs, c[i].count, c[i].text, c[i].self);
             }
         } else {
