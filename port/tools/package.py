@@ -55,7 +55,7 @@ a11y_<code>.txt of the same kind, and lines of your own go into a11y_<code>_own.
 
 Updates: once per start the game asks GitHub whether there is a newer release (F1 > Misc > "Check for updates"
 turns that off). If there is, the main menu says so and F1 offers Update now: the new release is downloaded in the
-background and checked, and Restart now installs it over this folder and starts the new version (if anything goes
+background and its signature checked, and Restart now installs it over this folder and starts the new version (if anything goes
 wrong, every file is put back). Your saves, settings (bt3_settings.txt), game data (gamedata/, mods in it), texture
 packs, songs and stages are never touched. Updating by hand (the new files copied over the old ones) works as before.
 
@@ -224,6 +224,7 @@ def main_win():
     shutil.copy2(ROOT / "port/third_party/xxhash/LICENSE", lic / "xxhash.txt")
     shutil.copy2(ROOT / "port/third_party/miniaudio/LICENSE", lic / "miniaudio.txt")
     shutil.copy2(ROOT / "port/third_party/miniz/LICENSE", lic / "miniz.txt")
+    shutil.copy2(ROOT / "port/third_party/monocypher/LICENCE.md", lic / "monocypher.txt")  # (the update's signature check)
 
     take_fonts(out, lic)
     take_tbo_art(out, lic)
@@ -273,6 +274,7 @@ def main():
     shutil.copy2(ROOT / "port/third_party/xxhash/LICENSE", lic / "xxhash.txt")
     shutil.copy2(ROOT / "port/third_party/miniaudio/LICENSE", lic / "miniaudio.txt")
     shutil.copy2(ROOT / "port/third_party/miniz/LICENSE", lic / "miniz.txt")
+    shutil.copy2(ROOT / "port/third_party/monocypher/LICENCE.md", lic / "monocypher.txt")  # (the update's signature check)
 
     take_fonts(OUT, lic)
     take_tbo_art(OUT, lic)

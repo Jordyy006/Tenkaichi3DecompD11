@@ -10,7 +10,11 @@
  *   2. Newer: the main menu and the online screens say so; F1 has Update now, Later and What's new (the release's
  *      notes). Update now downloads this system's zip into update/ beside the program, in a thread, while the game
  *      goes on; no new online session starts meanwhile (Update_BlocksOnline).
- *   3. The zip is checked: its size and SHA-256 against what GitHub lists for it.
+ *   3. The zip is checked: its size and SHA-256 against what GitHub lists for it, and its Ed25519 signature (the
+ *      .sig beside it in the release, made by the release workflow with the private key) against the public key
+ *      compiled in (port/src/update_key.h; Monocypher, gs/update_crypto.c). A release without a .sig, or a build
+ *      without a key, is only announced (with its page); a wrong signature: nothing is installed, and the game says
+ *      so and shows the release page.
  *   4. Restart now (the player's choice, never during an online session) installs it, in two steps, with the
  *      program's own folder as the base of every path (not the working folder: a shortcut can start the game from
  *      anywhere):
@@ -47,6 +51,9 @@
 #include "update_sign.h"
 #include "port_version.h" /* (generated: PORT_VERSION) */
 #include "../port_release.h"
+#include "../update_key.h"
+
+int UpdCrypto_Check(const uint8_t sig[64], const uint8_t pub[32], const uint8_t *msg, size_t size); /* update_crypto.c */
 
 /* miniz (port/third_party/miniz, MIT): only its reading of zips, from memory */
 #define MINIZ_NO_ARCHIVE_WRITING_APIS
@@ -66,6 +73,7 @@
 #endif
 #define JSON_MAX (4 << 20) /* the release's description, notes and list of files */
 #define GAME_DAT GAME ".dat"
+#define SIG_MAX 4096
 
 typedef struct {
     char url[1024];
@@ -78,7 +86,7 @@ static struct {
     SDL_AtomicInt state, busy;
     char latest[32], page[256], why[512], cannot[256];
     char *notes;
-    Asset zip;
+    Asset zip, sig;
     int canInstall;
     char root[1024], work[1100], part[1200], file[1200], sha[65];
     long long got;
@@ -584,6 +592,17 @@ static int js_asset(const char *json, const char *name, Asset *out) {
 }
 
 /* ---- the folder ---- */
+static int key_set(uint8_t key[32]) { /* the public key compiled in (all zeros: none) */
+    int i, any = 0;
+    if (!Upd_HexBytes(PORT_UPDATE_KEY, key, 32)) {
+        return 0;
+    }
+    for (i = 0; i < 32; i++) {
+        any |= key[i];
+    }
+    return any != 0;
+}
+
 static int is_file(const char *path) {
     SDL_PathInfo info;
     return SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE;
@@ -622,7 +641,8 @@ static int SDLCALL check_thread(void *arg) {
     char *json = NULL, *notes;
     size_t len = 0;
     int cmp, can;
-    Asset zip;
+    uint8_t key[32];
+    Asset zip, sig;
 
     (void)arg;
     SDL_snprintf(url, sizeof(url), "%s/repos/" PORT_UPDATE_REPO "/releases/latest", api_base());
@@ -647,14 +667,21 @@ static int SDLCALL check_thread(void *arg) {
         }
     }
     js_asset(json, ASSET, &zip);
+    js_asset(json, ASSET ".sig", &sig);
     can = 1;
 #ifdef __APPLE__
     can = 0;
     SDL_strlcpy(cannot, "There is no release for macOS: build the new version from its source.", sizeof(cannot));
 #endif
-    if (can && zip.url[0] == '\0') {
+    if (can && !key_set(key)) {
+        can = 0;
+        SDL_strlcpy(cannot, "This build has no update key: it cannot install updates itself. Download the release by hand.", sizeof(cannot));
+    } else if (can && zip.url[0] == '\0') {
         can = 0;
         SDL_strlcpy(cannot, "The release has no " ASSET ": download it by hand.", sizeof(cannot));
+    } else if (can && sig.url[0] == '\0') {
+        can = 0;
+        SDL_strlcpy(cannot, "The release is not signed (no " ASSET ".sig), so the game will not install it. Download it by hand.", sizeof(cannot));
     } else if (can && !folder_ready(cannot, sizeof(cannot))) {
         can = 0;
     }
@@ -672,6 +699,7 @@ static int SDLCALL check_thread(void *arg) {
     SDL_free(sU.notes);
     sU.notes = notes;
     sU.zip = zip;
+    sU.sig = sig;
     sU.canInstall = can;
     SDL_strlcpy(sU.cannot, cannot, sizeof(sU.cannot));
     unlock();
@@ -712,18 +740,28 @@ void Update_Check(void) {
 
 /* ---- the download and its checks ---- */
 static int SDLCALL download_thread(void *arg) {
-    char why[512], hex[65];
+    char why[512], hex[65], *sigText = NULL;
+    uint8_t sig[64], key[32];
+    size_t size = 0;
+    void *data;
     SDL_PathInfo info;
-    Asset zip;
+    Asset zip, sigAsset;
 
     (void)arg;
     lock();
     zip = sU.zip;
+    sigAsset = sU.sig;
     unlock();
     SDL_CreateDirectory(sU.work);
     SDL_RemovePath(sU.part);
     SDL_RemovePath(sU.file);
     fprintf(stderr, "bt3: update: downloading %s\n", zip.url);
+    if (!http_get(sigAsset.url, 0, NULL, &sigText, NULL, SIG_MAX) || !Upd_HexBytes(js_ws(sigText), sig, 64)) {
+        SDL_free(sigText);
+        fail("The release's signature (" ASSET ".sig) could not be downloaded or read. Try again later.");
+        return 0;
+    }
+    SDL_free(sigText);
     sU.got = 0;
     if (!http_get(zip.url, 0, sU.part, NULL, NULL, 0)) {
         SDL_RemovePath(sU.part);
@@ -737,11 +775,27 @@ static int SDLCALL download_thread(void *arg) {
         fail(why);
         return 0;
     }
-    if (!UpdSha256_File(sU.part, hex) || (zip.sha[0] != '\0' && SDL_strcasecmp(hex, zip.sha) != 0)) {
+    data = SDL_LoadFile(sU.part, &size);
+    if (data == NULL) {
+        SDL_RemovePath(sU.part);
+        fail("The downloaded archive could not be read back.");
+        return 0;
+    }
+    UpdSha256_Hex(data, size, hex);
+    if (zip.sha[0] != '\0' && SDL_strcasecmp(hex, zip.sha) != 0) {
+        SDL_free(data);
         SDL_RemovePath(sU.part);
         fail("The download is damaged: its SHA-256 is not the one GitHub lists for it. Try again later.");
         return 0;
     }
+    if (!key_set(key) || !UpdCrypto_Check(sig, key, (const uint8_t *)data, size)) {
+        SDL_free(data);
+        SDL_RemovePath(sU.part);
+        fail("The archive's signature is NOT valid: it was not signed with this game's release key, so nothing was "
+             "installed. Download the release from its page only if you trust where it comes from.");
+        return 0;
+    }
+    SDL_free(data);
     if (!SDL_RenamePath(sU.part, sU.file)) {
         SDL_RemovePath(sU.part);
         fail("The downloaded archive could not be kept in the update folder.");
@@ -750,7 +804,7 @@ static int SDLCALL download_thread(void *arg) {
     lock();
     SDL_strlcpy(sU.sha, hex, sizeof(sU.sha));
     unlock();
-    fprintf(stderr, "bt3: update: %s downloaded and checked (sha256 %s)\n", ASSET, hex);
+    fprintf(stderr, "bt3: update: %s downloaded and verified (signature good, sha256 %s)\n", ASSET, hex);
     SDL_SetAtomicInt(&sU.state, UPD_READY);
     return 0;
 }

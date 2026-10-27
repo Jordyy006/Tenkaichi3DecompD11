@@ -1684,100 +1684,101 @@ static void update_panel(void) {
     const char *ver;
     int last = Update_LastResult(&ver);
     const ImVec4 gold(1.0f, 0.85f, 0.3f, 1.0f), red(1.0f, 0.55f, 0.35f, 1.0f), green(0.45f, 0.85f, 0.5f, 1.0f);
-    bool any = false;
 
     Update_Status(&u);
     if (last > 0 && u.state < UPD_AVAILABLE) {
         ImGui::TextColored(green, "Updated to %s.", ver);
-        any = true;
-    }
-    if (u.state >= UPD_AVAILABLE) {
-        any = true;
-        ImGui::AlignTextToFramePadding();
-        if (u.state == UPD_AVAILABLE) {
-            ImGui::TextColored(gold, "Update %s available (this is %s).", u.latest, u.current);
-            if (u.canInstall) {
-                ImGui::SameLine();
-                if (ImGui::Button("Update now")) {
-                    Update_Download();
-                }
-                ImGui::SetItemTooltip("Downloads the new version in the background and checks it; you go on playing\n"
-                                      "meanwhile (online play waits until it is installed). Then Restart now installs it.\n"
-                                      "Your saves, settings, game data, mods and texture packs are not touched.");
-                if (!sUpdLater) {
-                    ImGui::SameLine();
-                    if (ImGui::Button("Later")) {
-                        sUpdLater = true;
-                    }
-                    ImGui::SetItemTooltip("No reminder over the menus until the next start.");
-                }
-            }
-        } else if (u.state == UPD_DOWNLOADING) {
-            ImGui::TextColored(gold, "Downloading %s: %d%% (%.1f of %.1f MB)", u.latest, upd_percent(u), (double)u.got / 1e6, (double)u.total / 1e6);
-        } else if (u.state == UPD_VERIFYING) {
-            ImGui::TextColored(gold, "Checking the download of %s (its signature)...", u.latest);
-        } else if (u.state == UPD_READY) {
-            ImGui::TextColored(green, "Update %s is downloaded and verified.", u.latest);
-            ImGui::SameLine();
-            bool busy = upd_online();
-            if (busy) {
-                ImGui::BeginDisabled();
-            }
-            if (ImGui::Button("Restart now")) {
-                upd_restart();
-            }
-            if (busy) {
-                ImGui::EndDisabled();
-            }
-            ImGui::SetItemTooltip(busy ? "Not during an online session: finish it first."
-                                       : "Installs the update over the game's folder and starts the new version (if anything\n"
-                                         "goes wrong, every file is put back). Your saves and settings are not touched.");
-        } else if (u.state == UPD_INSTALLING || u.state == UPD_INSTALLED) {
-            ImGui::TextColored(gold, "Installing %s...", u.latest);
-        } else if (u.state == UPD_FAILED) {
-            ImGui::PushStyleColor(ImGuiCol_Text, red);
-            ImGui::TextWrapped("The update to %s was not installed: %s", u.latest, u.why);
-            ImGui::PopStyleColor();
-            if (ImGui::Button("Try again")) {
-                Update_Download();
-            }
-            ImGui::SameLine();
-        }
-        if (u.state != UPD_FAILED) {
-            ImGui::SameLine();
-        }
-        if (ImGui::Button(sUpdNotes ? "Hide what's new" : "What's new")) {
-            sUpdNotes = !sUpdNotes;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Release page")) {
-            SDL_OpenURL(u.page);
-        }
-        ImGui::SetItemTooltip("Opens the release page in your browser. To update by hand, copy the new files over the old ones.");
-        if (u.state == UPD_DOWNLOADING || u.state == UPD_VERIFYING) {
-            ImGui::ProgressBar(u.state == UPD_VERIFYING ? 1.0f : (float)upd_percent(u) / 100.0f, ImVec2(-1.0f, 0.0f), "");
-        }
-        if (!u.canInstall && u.cannot[0] != '\0') {
-            ImGui::TextDisabled("%s", u.cannot);
-        }
-        if (Port_OnlineBlocked() != NULL) {
-            ImGui::TextDisabled("%s", Port_OnlineBlocked());
-        }
-        if (sUpdWhy[0] != '\0') {
-            ImGui::PushStyleColor(ImGuiCol_Text, red);
-            ImGui::TextWrapped("%s", sUpdWhy);
-            ImGui::PopStyleColor();
-        }
-        if (sUpdNotes) {
-            const char *notes = Update_Notes();
-            ImGui::BeginChild("notes", ImVec2(0.0f, U(180.0f)), ImGuiChildFlags_Borders);
-            ImGui::TextWrapped("%s", notes[0] != '\0' ? notes : "(The release has no notes.)");
-            ImGui::EndChild();
-        }
-    }
-    if (any) {
         ImGui::Separator();
     }
+    if (u.state < UPD_AVAILABLE) {
+        return;
+    }
+    // the line that says where it stands
+    if (u.state == UPD_AVAILABLE) {
+        ImGui::TextColored(gold, "Update %s available (this is %s).", u.latest, u.current);
+    } else if (u.state == UPD_DOWNLOADING) {
+        ImGui::TextColored(gold, "Downloading %s: %d%% (%.1f of %.1f MB). You can go on playing.", u.latest, upd_percent(u), (double)u.got / 1e6,
+                           (double)u.total / 1e6);
+        ImGui::ProgressBar((float)upd_percent(u) / 100.0f, ImVec2(-1.0f, 0.0f), "");
+    } else if (u.state == UPD_VERIFYING) {
+        ImGui::TextColored(gold, "Checking the download of %s (its signature)...", u.latest);
+        ImGui::ProgressBar(1.0f, ImVec2(-1.0f, 0.0f), "");
+    } else if (u.state == UPD_READY) {
+        ImGui::TextColored(green, "Update %s is downloaded and verified.", u.latest);
+    } else if (u.state == UPD_INSTALLING || u.state == UPD_INSTALLED) {
+        ImGui::TextColored(gold, "Installing %s...", u.latest);
+    } else if (u.state == UPD_FAILED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("The update to %s was not installed: %s", u.latest, u.why);
+        ImGui::PopStyleColor();
+    }
+    // the buttons
+    if (u.state == UPD_AVAILABLE && u.canInstall) {
+        if (ImGui::Button("Update now")) {
+            Update_Download();
+        }
+        ImGui::SetItemTooltip("Downloads the new version in the background and checks its signature; you go on playing\n"
+                              "meanwhile (online play waits until it is installed). Then Restart now installs it.\n"
+                              "Your saves, settings, game data, mods and texture packs are not touched.");
+        ImGui::SameLine();
+        if (!sUpdLater) {
+            if (ImGui::Button("Later")) {
+                sUpdLater = true;
+            }
+            ImGui::SetItemTooltip("No reminder over the menus until the next start.");
+            ImGui::SameLine();
+        }
+    } else if (u.state == UPD_READY) {
+        bool busy = upd_online();
+        if (busy) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Restart now")) {
+            upd_restart();
+        }
+        if (busy) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SetItemTooltip(busy ? "Not during an online session: finish it first."
+                                   : "Installs the update over the game's folder and starts the new version (if anything\n"
+                                     "goes wrong, every file is put back). Your saves and settings are not touched.");
+        ImGui::SameLine();
+    } else if (u.state == UPD_FAILED && u.canInstall) {
+        if (ImGui::Button("Try again")) {
+            Update_Download();
+        }
+        ImGui::SameLine();
+    }
+    if (ImGui::Button(sUpdNotes ? "Hide what's new" : "What's new")) {
+        sUpdNotes = !sUpdNotes;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Release page")) {
+        SDL_OpenURL(u.page);
+    }
+    ImGui::SetItemTooltip("Opens the release page in your browser. To update by hand, copy the new files over the old ones.");
+    if (!u.canInstall && u.cannot[0] != '\0') {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", u.cannot);
+        ImGui::PopStyleColor();
+    }
+    if (Port_OnlineBlocked() != NULL && u.state != UPD_INSTALLED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", Port_OnlineBlocked());
+        ImGui::PopStyleColor();
+    }
+    if (sUpdWhy[0] != '\0') {
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("%s", sUpdWhy);
+        ImGui::PopStyleColor();
+    }
+    if (sUpdNotes) {
+        const char *notes = Update_Notes();
+        ImGui::BeginChild("notes", ImVec2(0.0f, U(180.0f)), ImGuiChildFlags_Borders);
+        ImGui::TextWrapped("%s", notes[0] != '\0' ? notes : "(The release has no notes.)");
+        ImGui::EndChild();
+    }
+    ImGui::Separator();
 }
 
 static void misc_tab(void) {
