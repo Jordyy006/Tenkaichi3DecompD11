@@ -1065,7 +1065,7 @@ static int SDLCALL install_thread(void *arg) {
     size_t zipSize = 0;
     void *zipData;
     mz_zip_archive zip;
-    FILE *list;
+    SDL_IOStream *list;
 
     (void)arg;
     if (SDL_getenv("BT3_UPDATE_FAIL_AT") != NULL) {
@@ -1211,14 +1211,14 @@ static int SDLCALL install_thread(void *arg) {
     }
     /* done: the .old files to remove at the next start, and what to say then */
     SDL_snprintf(path, sizeof(path), "%scleanup.txt", sU.work);
-    list = fopen(path, "a"); /* (paths in the folder, UTF-8: SDL opens them) */
+    list = SDL_IOFromFile(path, "ab"); /* (SDL: the folder's path may have any letters; '\n' alone on every system) */
     for (i = 0; i < count; i++) {
         if (items[i].existed && list != NULL) {
-            fprintf(list, "%s.old\n", items[i].rel);
+            SDL_IOprintf(list, "%s.old\n", items[i].rel);
         }
     }
     if (list != NULL) {
-        fclose(list);
+        SDL_CloseIO(list);
     }
     SDL_snprintf(path, sizeof(path), "%sresult.txt", sU.work);
     lock();
@@ -1279,47 +1279,49 @@ int Update_Relaunch(void) {
 
 /* At start: the .old files the last update left (by its list), and the leftovers of a download. */
 void Update_Cleanup(void) {
-    char path[1300], *data, *line, *next;
-    size_t size = 0;
-    int left = 0;
+    char path[1300], *data, *line, *next, *keep;
+    size_t size = 0, kept = 0;
 
     folders();
     SDL_RemovePath(sU.part);
     SDL_snprintf(path, sizeof(path), "%scleanup.txt", sU.work);
     data = (char *)SDL_LoadFile(path, &size);
-    if (data == NULL) {
+    keep = data != NULL ? (char *)SDL_malloc(size + 1) : NULL;
+    if (keep == NULL) {
+        SDL_free(data);
         return;
     }
-    for (line = data; line != NULL && *line != '\0'; line = next) {
+    for (line = data; line < data + size; line = next) {
         char old[1600];
         size_t len;
-        next = strchr(line, '\n');
-        if (next != NULL) {
-            *next++ = '\0';
+        next = memchr(line, '\n', (size_t)(data + size - line));
+        next = next != NULL ? next + 1 : data + size;
+        len = (size_t)(next - line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' ')) {
+            len--; /* (also a list written by hand on Windows) */
         }
-        len = strlen(line);
-        if (len > 4 && strcmp(line + len - 4, ".old") == 0 && strstr(line, "..") == NULL) {
-            path_of(old, sizeof(old), line, "");
-            if (!SDL_RemovePath(old) && is_file(old)) {
-                left++; /* (still in use: next time) */
-                continue;
-            }
+        if (len <= 4 || len >= 512 || memcmp(line + len - 4, ".old", 4) != 0) {
+            continue; /* (only the update's own .old files, by their place in the folder) */
         }
-        line[0] = '\0';
+        memcpy(old, line, len);
+        old[len] = '\0';
+        if (strstr(old, "..") != NULL) {
+            continue;
+        }
+        path_of(path, sizeof(path), old, "");
+        if (!SDL_RemovePath(path) && is_file(path)) { /* still in use: next time */
+            memcpy(keep + kept, old, len);
+            kept += len;
+            keep[kept++] = '\n';
+        }
     }
-    if (left == 0) {
+    SDL_snprintf(path, sizeof(path), "%scleanup.txt", sU.work);
+    if (kept == 0) {
         SDL_RemovePath(path);
-    } else { /* the ones that are still there, for the next start */
-        FILE *fp = fopen(path, "w");
-        for (line = data; fp != NULL && line < data + size; line += strlen(line) + 1) {
-            if (line[0] != '\0') {
-                fprintf(fp, "%s\n", line);
-            }
-        }
-        if (fp != NULL) {
-            fclose(fp);
-        }
+    } else {
+        SDL_SaveFile(path, keep, kept);
     }
+    SDL_free(keep);
     SDL_free(data);
 }
 
