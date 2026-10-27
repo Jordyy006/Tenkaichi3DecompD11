@@ -86,7 +86,7 @@ end of the stage select, named after the file ("My_Map.unk" is shown as "My Map"
 
 Optional: a file maps.txt here, one line per stage, "file.unk|Name In The Menu", gives other names and an order.
 
-Added stages are not written to your save, and they are not offered in an online match (Dragon Net Battle).
+Added stages are not written to your save, and they are not offered in an online match (Tenkaichi Budokai Online).
 """
 
 SONGS_NOTE = """Music from outside the disc.
@@ -101,7 +101,7 @@ not listed while the .mp3 is there (it can be deleted). Anything else (ogg, m4a.
 
 Optional: a file songs.txt here, one line per song, "file|Name In The Menu", gives other names and an order.
 
-Added songs are not written to your save, and they are not offered in an online match (Dragon Net Battle).
+Added songs are not written to your save, and they are not offered in an online match (Tenkaichi Budokai Online).
 """
 
 

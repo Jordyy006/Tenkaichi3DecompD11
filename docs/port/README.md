@@ -3622,8 +3622,9 @@ character select, battles and rematches, and its player-1 view is the host's pic
   Change view). Only drawing: the fight's values are the same in every view (tested below; the game's whole state
   differs by the camera, as between the two players' copies).
 
-**In the game.** The online window's Join tab has "Watch the match" beside "Join the match" (by address and port, or
-by room code); the Host tab "Let others watch the match" (setting `net_spectators`, on by default; the host then
+**In the game.** (Since 2026-10-28 on Tenkaichi Budokai Online's Join Room and Join by Address, WATCH, and F1 >
+Online; see the last chapter. What follows is the window as it was then.) The online window's Join tab has "Watch
+the match" beside "Join the match" (by address and port, or by room code); the Host tab "Let others watch the match" (setting `net_spectators`, on by default; the host then
 answers no). While the host has no match yet the spectator waits ("The host is there but its match has not begun
 yet"). The players see "N watching: names" small in the top right corner; the spectator a line at the top
 ("Spectating A vs B, view: ...", "V or R1: change view, F1: stop watching"), and F1 has Change view and Stop
@@ -3691,8 +3692,8 @@ matches; the two in the player places play, everyone else watches.
 **In the game** (changed the same day: the lobby is one of the game's own screens now, no longer an ImGui window; see
 "The screens" below). Tenkaichi Budokai Online's list has Lobby: it asks for nothing, opens a lobby with a room code
 and shows its page at once, with the code to hand on. Others type that code on Join Room: the service's answer says
-it is a lobby, and the game becomes a member and shows the same page. (By address, `BT3_LOBBY=lobbyjoin:` and the
-Dragon Net Battle window's Join tab still work; the window then closes with a line saying that the lobby's screen
+it is a lobby, and the game becomes a member and shows the same page. (By address, `BT3_LOBBY=lobbyjoin:`, Join by Address
+(2026-10-28) and the Dragon Net Battle window's Join tab still work; the window then closes with a line saying that the lobby's screen
 is in Tenkaichi Budokai Online, which the main menu goes to by itself.) The page (src/menu/port_tbo.c, `TB_LOBBY`):
 
 - the places: 1P and 2P, then spectators 1 to 6, with the owner's mark, this game's own ("YOU") and who is ready.
@@ -4287,3 +4288,69 @@ Joseph Llacchua and the commits on it; the chapter "Automatic updates"). Where t
 - A member keeps the code it asked the service for (`sCodeAsked`), since the service's answer to a member has none:
   the rejoin token goes only to the lobby of its own code.
 
+
+## Tenkaichi Budokai Online does what Dragon Net Battle did; the window is put away (2026-10-28)
+
+Everything the Dragon Net Battle window (port/src/gs/ui.cpp, `build_net`) could do is on the game's own screens now
+(src/menu/port_tbo.c), and the window is no longer in the way of a player:
+
+- **Watch a room by its code.** Join Room has a second row of buttons under DELETE / PASTE / JOIN: BY ADDRESS and
+  WATCH (under JOIN; the cursor still goes to JOIN when the sixth letter is typed, so the pad recordings of the
+  lobby tests type and join as before). WATCH is `Port_LobbySpectateCode`, the window's "Watch the match": the waiting
+  page says WATCHING and the code, "Asking the host to let you watch...", and, while the host's match has not begun
+  (`Port_LobbySpectateWaiting`), "The match has not begun yet: you watch it when it does". The match is then watched
+  as before (the line over it, R1 for the view, START for the spectator's pause menu). A spectator has no Train While
+  Waiting. When the host says no (the room is full, it lets nobody watch, other data, another version, no answer),
+  the reason is the hosts' line in the box for ten seconds (`Tb_Say`: these lines are long; `sTbNetLines` puts them
+  in the translation file) and a short note says "You cannot watch this match". **A lobby's code** (or a lobby
+  owner's address) under WATCH does what JOIN does: the service answers it as a lobby, the game becomes a member,
+  and the hosts say "That is a lobby: you joined it. Its owner chooses who plays; everyone else watches the matches
+  from here." (a member watches every match it is not put into; one rule for both ways in, and nothing new in the
+  lobby).
+- **Join by Address** (`TB_ADDR`, Join Room's BY ADDRESS): one line, the host's address and the port after a colon
+  (7000 when none is typed, as the window's default), on a keypad of five rows: the digits, then `0 . : -` and the
+  letters of a host name (the blank keys of the last row are not there: the cursor does not stop on them). The PC
+  keyboard types (letters as small letters), Ctrl+V and PASTE take the last word of the clipboard
+  (`PortTbo_PasteText`). DELETE, PASTE, WATCH, JOIN: JOIN is `Port_LobbyStart(0, address, port)`, WATCH
+  `Port_LobbySpectate`. The address is kept (text setting `net_join_addr`) and offered the next time, the cursor on
+  JOIN. Wrong input is said before anything is sent ("Type the host's address first", "The port after the colon is a
+  number from 1 to 65535", "That address is not known").
+- **Host by Address**: Create Room's last row (its value is the port, setting `net_port`, 7000 to begin with;
+  left / right by one, L1 / R1 by a hundred). Cross is `Port_LobbyStart(1, "", port)` with the room's rules. The
+  waiting page shows the port in large figures, "On your network:" this PC's address (`Port_NetLanAddress`, the
+  address a socket would send from, found without sending anything), and that over the internet the others need the
+  public address with the port open; cross copies "address:port" for pasting, square trains while waiting (its sign
+  says "Your room: port N").
+- **Create Room has the window's rules**: Battle is one on one, teams, or DP battle of 10, 15 or 20 DP (the lobby's
+  order, so a lobby made from the list starts with it too), and a new row Game Speed (the lobby's steps, 100 to 150%,
+  setting `net_speed_host` as the window's slider; 114% is "standard"). The seven rows are 31 units apart.
+- The data policy and the update's hold are the rooms': every way in goes through `Tb_Vanilla` (the fingerprint
+  known, no update under way) and gs/net.c compares the two games' data as for any match with friends.
+- The screens ask the matchmaking service "hello" when they open, as the window did (is this release still let in,
+  the service's clock for the signed requests); below the minimum the hosts say "Update available. Online servers
+  are unreachable until you update."
+- **The window is put away.** The main menu lists Dragon Net Battle only when the player asks for it (setting
+  `net_dnb_menu`, off; `Port_NetMenuListed`, headless.c; `BT3_MENU_ITEM4=1` lists it for tests). F1 has a tab
+  **Online**: "Let others watch your matches" (`net_spectators`, which only the window had), "End an online match on
+  a desync" and the chat (moved from Misc), and a closed section **Advanced** with "Open Dragon Net Battle" and "List
+  Dragon Net Battle in the main menu". Its code is unchanged. The texts that sent players to it now name the screens:
+  the spectators' refusal of a plain connected run ("not started from the online menus"), the release notes of
+  stages and songs (package.py), README.md.
+
+Tested (Linux, offscreen, 1x, scratch saves and settings, the virtual test pad only, room codes against a local
+stand-in of the Worker):
+
+| test | result |
+| --- | --- |
+| 1v1 room by code: host `BT3_LOBBY=host`, a spectator through the pages (Join Room, ABCDEF, WATCH) 50 s before the joiner comes | the spectator waited on "the match has not begun yet", then watched; its whole state identical to the host's over 10,507 blanks, the two players' fight values over 7,278 |
+| by address through the pages: host on Host by Address (port 47811), joiner on Join by Address (`127.0.0.1:47811`, START), a spectator on Join by Address (WATCH) | the match played, fight values identical over 8,226 blanks; the spectator caught up and was identical over 11,426 |
+| the lobby through the pages (owner Lobby, two members type its code on Join Room and JOIN; a match, back, closed) | as before: the spectator identical over 6,990 blanks, the players' fight values over 3,786 |
+| WATCH with a lobby's code (the owner made the lobby from the list) | joined the lobby (given the free 2P place), the hosts' line said so |
+| a 4-entrant tournament (owner and three members by code, `BT3_LOBBY_DO`) | three matches and a champion; in each match every copy's fight values identical to the owner's (3,716 to 3,786 blanks) |
+| quick match, original data on both (`BT3_LOBBY=quick:S`) | matched and played; fight values identical over 7,711 blanks |
+| screenshots | Create Room (seven rows), Host by Address waiting, Join Room with BY ADDRESS / WATCH, Join by Address, the spectator waiting for the match, the lobby after WATCH, the main menu without Dragon Net Battle (and with it, `BT3_MENU_ITEM4=1`), F1 > Online with Advanced open (`BT3_UI_OPEN=7 BT3_UI_ADVANCED=1`) |
+
+Windows: built (mingw); not run. The PS2 build of the two game files touched (port_tbo.c, menu_a.c: comments and
+`#ifdef PORT` only) is unchanged (`cpp -P` md5). Not tested: a real second PC on the network (the LAN address
+shown was this PC's own and joined over 127.0.0.1), a host name typed instead of an address, the PC keyboard and
+PASTE on Join by Address (the pad typed everything), the screen reader's lines for the new pages.

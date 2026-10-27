@@ -719,8 +719,9 @@ static void build_quit(void) {
     }
 }
 
-// Dragon Net Battle: the screen behind the main menu's entry. For now only its shape: what a player fills in to
-// host or join. Nothing is sent anywhere yet.
+// Dragon Net Battle: the first online window of the port, behind the main menu's item 4. Tenkaichi Budokai Online's
+// screens (src/menu/port_tbo.c) do everything it does; it is opened from F1 > Online > Advanced, and listed in the
+// main menu only when the player asks for it there (setting net_dnb_menu).
 extern "C" {
 extern volatile int gPortNetMenuRequest;
 extern volatile int gPortNetWindowClose; // gs/state.c
@@ -931,8 +932,9 @@ static void build_net(void) {
                         Port_SettingsWrite();
                     }
                     Port_NetSpectatorsAllow(watch);
-                    ImGui::SetItemTooltip("Up to 6 spectators can watch, with your address or room code (Join tab, \"Watch the\n"
-                                          "match\"). They cost your match nothing: it never waits for them.");
+                    ImGui::SetItemTooltip("Up to 6 spectators can watch, with your address or room code (the Join tab's \"Watch the\n"
+                                          "match\", or Watch on Tenkaichi Budokai Online's Join Room and Join by Address). They cost\n"
+                                          "your match nothing: it never waits for them. Also in F1 > Online.");
                 }
                 ImGui::TextDisabled("The host's choices apply to both players. Both need the same game data (mods too).");
                 ImGui::EndTabItem();
@@ -1838,6 +1840,20 @@ static void misc_tab(void) {
                           "corner while it saves, and the save loaded at start without a page. Load in the options\n"
                           "still asks first, then loads at once. A missing card, a full card or a failed save is\n"
                           "still shown. Online the game's own pages always run. Off: the game's own pages.");
+}
+
+// F1 > Online: the settings of online play (Tenkaichi Budokai Online's screens are the way in: the game's main menu), and
+// under Advanced the old Dragon Net Battle window, which the screens have replaced (it is kept for testing and for
+// whoever still wants it: the same connections, in a plain window).
+static void online_tab(void) {
+    bool watch = Port_Setting("net_spectators", 1) != 0;
+    if (ImGui::Checkbox("Let others watch your matches", &watch)) {
+        Port_SettingSave("net_spectators", watch ? 1 : 0);
+        Port_SettingsWrite();
+        Port_NetSpectatorsAllow(watch);
+    }
+    ImGui::SetItemTooltip("Up to 6 spectators can watch a match you host, with its room code or your address (Join Room or\n"
+                          "Join by Address, then Watch). They cost your match nothing: it never waits for them.");
     ImGui::Spacing();
     bool desyncEnds = Port_Setting("net_desync_end", 0) != 0;
     if (ImGui::Checkbox("End an online match on a desync", &desyncEnds)) {
@@ -1869,6 +1885,26 @@ static void misc_tab(void) {
                               "Compact: 4 / 2, narrower.\n"
                               "Normal: 6 / 4.\n"
                               "Large: 8 / 6, wider, for large screens.");
+    }
+    ImGui::Spacing();
+    if (getenv("BT3_UI_ADVANCED") != NULL) { // (testing, with BT3_UI_OPEN=7: the section opened, for a picture of it)
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    }
+    if (ImGui::CollapsingHeader("Advanced")) {
+        ImGui::TextWrapped("Dragon Net Battle is the first online window of this port. Tenkaichi Budokai Online (the main "
+                           "menu) does everything it does: rooms by code or by address, watching, lobbies and quick matches.");
+        ImGui::BeginDisabled(Port_NetActive() != 0);
+        if (ImGui::Button("Open Dragon Net Battle")) {
+            gPortNetMenuRequest = 1; // (opened in place of this window at the next frame: frame_build)
+            set_open(false);
+        }
+        ImGui::EndDisabled();
+        bool listed = Port_Setting("net_dnb_menu", 0) != 0;
+        if (ImGui::Checkbox("List Dragon Net Battle in the main menu", &listed)) {
+            Port_SettingSave("net_dnb_menu", listed ? 1 : 0);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Shows the entry beside Tenkaichi Budokai Online the next time the main menu is opened.");
     }
 }
 
@@ -2285,7 +2321,7 @@ static void build(void) {
         open = false;
     }
     if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
-        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 6 : 1)) % 7;
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 7 : 1)) % 8;
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -2376,6 +2412,7 @@ static void build(void) {
             }
             if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
             if (tab("Misc", 6)) { misc_tab(); ImGui::EndTabItem(); }
+            if (tab("Online", 7)) { online_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         ImGui::EndChild();

@@ -1530,7 +1530,7 @@ static const char *spec_no_text(int why) {
     case SPEC_NO_OFF:
         return "The host does not let anyone watch its matches.";
     case SPEC_NO_PLAIN:
-        return "This match cannot be watched (it was not started from Dragon Net Battle).";
+        return "This match cannot be watched (it was not started from the online menus).";
     case SPEC_NO_PLAYER:
         return "That is the address of the player who joined, not of the host: spectators connect to the host.";
     case SPEC_NO_LOBBY:
@@ -3433,6 +3433,44 @@ int Port_LobbySpectateCode(const char *code) {
 
 int Port_LobbySpectateWaiting(void) {
     return sLobby == 1 && sLobbyRole == 3 && sLobbySpecWait;
+}
+
+/* This PC's address on its own network (what another PC there types to join a match hosted by address): the address a
+   socket would send from, found without sending anything (as net_match.c's for the matchmaking service). Asked again
+   at most every five seconds; "" when it is not known (no network). */
+const char *Port_NetLanAddress(void) {
+    static char text[48];
+    static uint64_t asked;
+    uint64_t now = SDL_GetTicksNS();
+    struct sockaddr_in to, me;
+    socklen_t len = sizeof(me);
+    int s;
+
+    if (asked != 0 && now - asked < 5000000000ull) {
+        return text;
+    }
+    asked = now;
+    text[0] = '\0';
+#ifdef _WIN32
+    {
+        WSADATA w;
+        WSAStartup(MAKEWORD(2, 2), &w);
+    }
+#endif
+    s = (int)socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        return text;
+    }
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port = htons(9);
+    inet_pton(AF_INET, "192.0.2.1", &to.sin_addr); /* (a documentation address: nothing is sent) */
+    if (connect(s, (struct sockaddr *)&to, sizeof(to)) != 0 || getsockname(s, (struct sockaddr *)&me, &len) != 0 ||
+        inet_ntop(AF_INET, &me.sin_addr, text, sizeof(text)) == NULL || strcmp(text, "0.0.0.0") == 0) {
+        text[0] = '\0';
+    }
+    closesocket(s);
+    return text;
 }
 
 static int sQuickQueue = -1; /* Port_LobbyStartQuick: the search that Port_LobbyStartCode starts is a quick match in this queue */
