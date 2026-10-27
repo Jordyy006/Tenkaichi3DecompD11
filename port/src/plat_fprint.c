@@ -1232,6 +1232,16 @@ static char sText[512];
 
 /* 1: *out is the fingerprint. 0: not ready yet (it is being computed). -1: not computed in this run (no data
    check: BT3_GS=none without BT3_VERIFY=1). */
+/* The data check's thread is started and will compute the fingerprint (1), or could not be started (0): until then
+   the state is "being computed", not "off", so the online screens say to wait instead of refusing (a slow drive). */
+void PortFp_Pending(int on) {
+    if (on && sState == FP_OFF) {
+        sState = FP_RUNNING;
+    } else if (!on && sState == FP_RUNNING) {
+        sState = FP_OFF;
+    }
+}
+
 int Port_DataFingerprint(unsigned long long *out) {
     int state = sState;
     if (state == FP_READY && out != NULL) {
