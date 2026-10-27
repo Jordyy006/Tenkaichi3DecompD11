@@ -4096,6 +4096,16 @@ The match is played again (it stays the next one) when the two results differ, w
 on time, or it was left), when only one result came in 20 s, or when the match ends without one: the owner's "Back to
 the Lobby", the two players not connecting, a player's game leaving its session.
 
+**Two games that disagree.** A draw is played again as above (in real play they hardly happen). When the two
+players' games name different winners for the same match a second time, it is not played again: the owner's bracket
+page says "THE TWO GAMES DISAGREE ON THIS MATCH: CHOOSE THE WINNER" with the two names as buttons (and Back to the
+Lobby), the members' "THE OWNER IS CHOOSING THE WINNER", the box says so too, and no match starts meanwhile. The
+owner's choice is final ("NAME won the match (the owner's choice)"; `TOUR_CHOOSE`, the match's how 4; STATE byte
+616 the match being chosen, 620 bytes). A walkover of that match ends the choice. Tests: `BT3_TEST_RESULT_LIE=1` (a
+member reports the other winner), `BT3_LOBBY_DO` `choose <side>`. Tested with two entrants, the member lying: the
+first disagreement played again, the second asked the owner; its choice made the champion (pictures of both pages
+looked at).
+
 **Leaving.** An entrant who leaves the lobby (or is removed, or falls silent) loses by walkover: its match if it is
 playing (the match ends for everyone, as a player leaving always ended it), else its next one as soon as its opponent
 is known ("A won by walkover"). The owner leaving closes the lobby, and the tournament with it, as before. A newcomer

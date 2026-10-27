@@ -105,20 +105,22 @@ typedef struct PortLobbyView {
     int tourCur;                /* the match to play next, or being played; -1 none */
     int tourOn;                 /* the match being played now, -1 none */
     int tourChamp;              /* the champion (an entrant), -1 none yet */
+    int tourChoose;             /* the match whose winner the owner chooses (its two games disagreed twice), -1 none */
     int readyCount;             /* places marked ready */
     int entrants;               /* the player places: 2 (versus: 1P, 2P), a tournament's Entrants rule 2..8 */
     int entrantCount;           /* of them taken (a tournament started now has these) */
 } PortLobbyView;
 
 enum { LOBBY_START = 1, LOBBY_BACK, LOBBY_LEAVE, LOBBY_KICK, LOBBY_MOVE, LOBBY_RULE, LOBBY_READY, LOBBY_OK,
-       LOBBY_TOUR_NEW, LOBBY_TOUR_CALLOFF };
+       LOBBY_TOUR_NEW, LOBBY_TOUR_CALLOFF, LOBBY_TOUR_CHOOSE };
 enum { LOBBY_RULE_BATTLE = 0, LOBBY_RULE_TIME, LOBBY_RULE_SPEED, LOBBY_RULE_ROLLBACK, LOBBY_RULE_DELAY, LOBBY_RULE_MODE, LOBBY_RULE_ENTRANTS };
 
 int Port_LobbyView(PortLobbyView *out);   /* 0: no lobby (state 0) */
 /* START (versus: the match of 1P and 2P; a tournament: its next match, the two put in 1P and 2P), BACK (the owner:
    the match ends for everyone), LEAVE, KICK a (place), MOVE a b (two places swap), RULE a b (rule a one step: b -1
-   or +1), READY a (0 / 1), OK (a closed lobby's message was read), TOUR_NEW (a tournament of the places marked
-   ready, drawn), TOUR_CALLOFF (the tournament that is on ends without a champion). Done at the game's next blank. */
+   or +1), READY a (0 / 1), OK (a closed lobby's message was read), TOUR_NEW (a tournament of those in the player
+   places, drawn), TOUR_CALLOFF (the tournament that is on ends without a champion), TOUR_CHOOSE a (the owner's choice
+   of the winner of the match its games disagreed on twice: side a, 0 or 1). Done at the game's next blank. */
 void Port_LobbyDo(int what, int a, int b);
 void Port_LobbySay(const char *text);     /* a line of chat to everyone in the lobby */
 /* A new lobby, owned by this copy: with a room code (byCode) or on `port`. The rules to start from. 1 = under way. */

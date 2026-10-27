@@ -1690,12 +1690,13 @@ static char *sTbLobbyLines[] = {
     "No winner: the match will be played again.",
     "The players' results differ: the match will be played again.",
     "Only one player's result came: the match will be played again.",
+    "The two games disagree on this match: the owner chooses the winner.",
 };
-#define TB_LOBBY_NAMED 10
+#define TB_LOBBY_NAMED 11
 static char *sTbLobbyNamed[TB_LOBBY_NAMED] = {"%s joined the lobby", "%s left the lobby", "%s was removed from the lobby", "%s lost the connection to the lobby",
                                               "%s won the match", "%s won by walkover", "%s is the champion!",
                                               "%s lost the connection: the place is held for 90 s", "%s is back in the tournament",
-                                              "%s did not come back in time"};
+                                              "%s did not come back in time", "%s won the match (the owner's choice)"};
 
 /* `fmt` (in the chosen language: Tb_Fmt) with its %s parts the names a, b and its %d the number. */
 static void Tb_Subst(char *out, s32 size, char *fmt, const char *a, const char *b, s32 num) {
@@ -1902,7 +1903,7 @@ static s32 Tb_TourNextReady(void) {
     PortLobbyView *v = &sTbLv;
     s32 m = v->tourCur;
 
-    return m >= 0 && v->tourA[m] >= 0 && v->tourB[m] >= 0 && v->tourDrop[v->tourA[m]] == 0 && v->tourDrop[v->tourB[m]] == 0;
+    return m >= 0 && v->tourChoose < 0 && v->tourA[m] >= 0 && v->tourB[m] >= 0 && v->tourDrop[v->tourA[m]] == 0 && v->tourDrop[v->tourB[m]] == 0;
 }
 
 static s32 Tb_LobbyCanStart(void) {
@@ -1928,7 +1929,7 @@ static void Tb_LobbyStart(void) {
         Snd_PlaySe(1, 2);
         Tb_Note(v->phase ? "A MATCH IS ON ALREADY"
                 : !v->mode ? "TWO PLAYERS ARE NEEDED: ONE IN 1P, ONE IN 2P"
-                : v->tour == 1 ? (v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY")
+                : v->tour == 1 ? (v->tourChoose >= 0 ? "CHOOSE THE WINNER OF THE DISPUTED MATCH ON THE BRACKET" : v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY")
                                : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
     }
 }
@@ -2822,6 +2823,8 @@ static void Tb_LobbyFocus(char *focus, char *now) {
 #define BR_BTN_Y 280.0f
 #define BR_ACT_START 1
 #define BR_ACT_BACK 2
+#define BR_ACT_PICK_A 3 /* the owner's choice of a match's winner (its two games disagreed twice): its first, */
+#define BR_ACT_PICK_B 4 /* ... its second */
 
 static char *sTbRoundName[3] = {"Final", "Semifinal", "Quarterfinal"};
 
@@ -2915,20 +2918,35 @@ static s32 Tb_BrOut(s32 e) {
 
 /* The match the box and the glow are about: the one being played, else the next. */
 static s32 Tb_BrFocusMatch(void) {
-    return sTbLv.tourOn >= 0 ? sTbLv.tourOn : sTbLv.tourCur;
+    return sTbLv.tourOn >= 0 ? sTbLv.tourOn : sTbLv.tourChoose >= 0 ? sTbLv.tourChoose : sTbLv.tourCur;
+}
+
+/* The owner chooses a match's winner now (the bracket's buttons are the two names). */
+static s32 Tb_BrChoosing(void) {
+    s32 m = sTbLv.tourChoose;
+
+    return sTbLv.owner && !sTbLv.phase && m >= 0 && sTbLv.tourA[m] >= 0 && sTbLv.tourB[m] >= 0;
 }
 
 static s32 Tb_BracketCount(void) {
-    return sTbLv.owner ? 2 : 1;
+    return Tb_BrChoosing() ? 3 : sTbLv.owner ? 2 : 1;
 }
 
 static s32 Tb_BracketAct(s32 k) {
+    if (Tb_BrChoosing()) {
+        return k == 0 ? BR_ACT_PICK_A : k == 1 ? BR_ACT_PICK_B : BR_ACT_BACK;
+    }
     return sTbLv.owner && k == 0 ? BR_ACT_START : BR_ACT_BACK;
 }
 
 static char *Tb_BracketActName(s32 act) {
     PortLobbyView *v = &sTbLv;
 
+    if (act == BR_ACT_PICK_A || act == BR_ACT_PICK_B) { /* (a name: not translated) */
+        s32 m = v->tourChoose;
+
+        return v->tourName[act == BR_ACT_PICK_A ? v->tourA[m] : v->tourB[m]];
+    }
     if (act == BR_ACT_START) {
         return v->phase ? "Match On" : v->tour == 2 ? "New Tournament" : "Start Next Match";
     }
@@ -2959,7 +2977,7 @@ static void Tb_BracketStart(void) {
         Port_LobbyDo(v->tour == 1 ? LOBBY_START : LOBBY_TOUR_NEW, 0, 0);
     } else {
         Snd_PlaySe(1, 2);
-        Tb_Note(v->phase ? "A MATCH IS ON ALREADY" : v->tour == 1 ? (v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY") : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
+        Tb_Note(v->phase ? "A MATCH IS ON ALREADY" : v->tour == 1 ? (v->tourChoose >= 0 ? "CHOOSE THE WINNER OF THE DISPUTED MATCH ON THE BRACKET" : v->tourCur >= 0 ? "WAITING FOR A PLAYER WHO LOST THE CONNECTION" : "NO MATCH LEFT TO PLAY") : "PUT AT LEAST TWO PLAYERS IN THE PLAYER PLACES");
     }
 }
 
@@ -2986,12 +3004,16 @@ static void Tb_BracketUpdate(s32 live) {
         return;
     }
     if (Ps_Side() != 0 && count > 1) {
-        sTb->brCur = !sTb->brCur;
+        sTb->brCur = (sTb->brCur + Ps_Side() + count) % count;
         Snd_PlaySe(1, 0);
     }
     if (pad->gamePressed & PADG_CROSS) {
         if (Tb_BracketAct(sTb->brCur) == BR_ACT_START) {
             Tb_BracketStart();
+        } else if (Tb_BracketAct(sTb->brCur) != BR_ACT_BACK) { /* the owner's choice of the winner: final */
+            Snd_PlaySe(1, 1);
+            Port_LobbyDo(LOBBY_TOUR_CHOOSE, Tb_BracketAct(sTb->brCur) == BR_ACT_PICK_A ? 0 : 1, 0);
+            sTb->brCur = 0;
         } else {
             Snd_PlaySe(1, 2);
             sTb->lbHostPose = -1;
@@ -3019,7 +3041,10 @@ static void Tb_BrLine(f32 x0, f32 y0, f32 x1, f32 y1, u32 c) {
 }
 
 static void Tb_BrBtnBox(s32 k, f32 *x0, f32 *x1) {
-    if (Tb_BracketCount() == 1) {
+    if (Tb_BracketCount() == 3) { /* (the two names, then Back to the Lobby) */
+        *x0 = 52.0f + 140.0f * (f32)k;
+        *x1 = *x0 + 128.0f;
+    } else if (Tb_BracketCount() == 1) {
         *x0 = 186.0f;
         *x1 = 326.0f;
     } else {
@@ -3165,6 +3190,10 @@ static void Tb_DrawBracketText(void) {
         Ps_Text(256.0f, Ps_TextTop((BR_CH_Y0 + BR_CH_Y1) * 0.5f, 0.6f), "?", 0.6f, 0.0f, 4);
     }
     Ps_Text(256.0f, Ps_TextTop(Tb_BrMid() + 15.0f, 0.42f), "FINAL", 0.42f, 80.0f, focus == size - 2 && v->tour == 1 ? 1 : 4);
+    if (v->tourChoose >= 0 && !v->phase) {
+        Ps_Text(256.0f, Ps_TextTop(BR_BTN_Y - 9.0f, 0.42f), v->owner ? "THE TWO GAMES DISAGREE ON THIS MATCH: CHOOSE THE WINNER" : "THE OWNER IS CHOOSING THE WINNER",
+                0.42f, 440.0f, 1);
+    }
     for (k = 0; k < Tb_BracketCount(); k++) {
         f32 x0;
         f32 x1;
@@ -3198,6 +3227,12 @@ static char *Tb_BracketHelp(void) {
     if (m < 0 || v->tourA[m] < 0 || v->tourB[m] < 0) {
         return "Waiting for the next match...";
     }
+    if (v->tourChoose >= 0 && v->tourOn < 0) { /* the two games disagreed twice: the owner's choice */
+        Tb_Subst(line, 224, "%s vs %s", v->tourName[v->tourA[m]], v->tourName[v->tourB[m]], 0);
+        Ps_Cat(line, ": ", 224);
+        Ps_Cat(line, Tb_Fmt(v->owner ? "The two games disagree on this match: choose the winner." : "The owner is choosing the winner."), 224);
+        return line;
+    }
     Tb_Subst(line, 224, v->tourOn >= 0 ? "Now: %s vs %s" : "Next: %s vs %s", v->tourName[v->tourA[m]], v->tourName[v->tourB[m]], 0);
     Ps_Cat(line, " (", 224);
     Ps_Cat(line, Tb_Fmt(Tb_BrRoundName(m)), 224);
@@ -3217,7 +3252,10 @@ static char *Tb_BracketHelp(void) {
 
 /* What the screen reader says the bracket page's cursor is on. */
 static void Tb_BracketFocus(char *focus) {
-    Ps_Copy(focus, Tb_BracketActName(Tb_BracketAct(sTb->brCur)), 160);
+    s32 act = Tb_BracketAct(sTb->brCur);
+
+    Ps_Copy(focus, act == BR_ACT_PICK_A || act == BR_ACT_PICK_B ? "Choose the winner: " : "", 160);
+    Ps_Cat(focus, Tb_BracketActName(act), 160);
 }
 
 /* What the hosts say in the box at the foot of the screen (two lines at most). */
