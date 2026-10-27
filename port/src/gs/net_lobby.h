@@ -104,12 +104,14 @@ typedef struct PortLobbyView {
     int tourCur;                /* the match to play next, or being played; -1 none */
     int tourOn;                 /* the match being played now, -1 none */
     int tourChamp;              /* the champion (an entrant), -1 none yet */
-    int readyCount;             /* places marked ready (the entrants of a tournament started now) */
+    int readyCount;             /* places marked ready */
+    int entrants;               /* the player places: 2 (versus: 1P, 2P), a tournament's Entrants rule 2..8 */
+    int entrantCount;           /* of them taken (a tournament started now has these) */
 } PortLobbyView;
 
 enum { LOBBY_START = 1, LOBBY_BACK, LOBBY_LEAVE, LOBBY_KICK, LOBBY_MOVE, LOBBY_RULE, LOBBY_READY, LOBBY_OK,
        LOBBY_TOUR_NEW, LOBBY_TOUR_CALLOFF };
-enum { LOBBY_RULE_BATTLE = 0, LOBBY_RULE_TIME, LOBBY_RULE_SPEED, LOBBY_RULE_ROLLBACK, LOBBY_RULE_DELAY, LOBBY_RULE_MODE };
+enum { LOBBY_RULE_BATTLE = 0, LOBBY_RULE_TIME, LOBBY_RULE_SPEED, LOBBY_RULE_ROLLBACK, LOBBY_RULE_DELAY, LOBBY_RULE_MODE, LOBBY_RULE_ENTRANTS };
 
 int Port_LobbyView(PortLobbyView *out);   /* 0: no lobby (state 0) */
 /* START (versus: the match of 1P and 2P; a tournament: its next match, the two put in 1P and 2P), BACK (the owner:

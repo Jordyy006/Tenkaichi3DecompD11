@@ -4055,9 +4055,14 @@ him: the owner runs it and is the authority, every match is an ordinary lobby ma
 no CPU entrants.
 
 **In the game.** The lobby's rules have a new first row, Mode: Versus (as before) or Tournament (left / right, the
-owner's). In Tournament the battle is a single battle (its row says so and does not change); the time limit, speed,
-rollback and delay are the lobby's. The entrants are the places marked Ready when the owner presses Start Tournament
-(2 to 8 humans; the owner plays if it is marked ready, else it only runs the tournament). The bracket is drawn at once
+owner's). In Tournament the battle is a single battle and its row becomes **Entrants** (2 to 8, 2 at first; the
+owner's, not while a tournament is on); the time limit, speed, rollback and delay are the lobby's. The places on the
+left follow it: PLAYERS N / N with the places 1..N, then SPECTATORS with the other 8 - N (Versus keeps 1P, 2P and six
+spectators). The entrants are whoever sits in the player places when the owner presses Start Tournament (at least two;
+empty places are left out, byes as below); the owner fills them with Move, and plays only if it sits in one. Fewer
+entrants: those in the places that are no longer players' are spectators there now. Ready is not shown in Tournament
+(the places say who plays). (Changed after the user's first look: the entrants were the places marked Ready, and it was
+not clear who played and who watched.) The bracket is drawn at once
 and shown to everyone: a page of its own (`TB_BRACKET`, src/menu/port_tbo.c, the same kit as the lobby's page), the
 two halves meeting at the final in the middle as the game's own tournament tree does, each entrant's box on the outer
 edge, the lines of each match turning inwards and lit gold as far as an entrant has got, the match to play glowing
@@ -4068,7 +4073,7 @@ Buttons: the owner Start Next Match (also START) and Back to the Lobby, a member
 back as well. The lobby's page has a Bracket button while there is a bracket, its Start button says Start Tournament /
 Start Next Match / New Tournament, and "TOURNAMENT ON" / "OVER" by the code. The bracket page comes up by itself when a
 tournament is drawn and when a tournament's match ends. When it is over the owner starts a new one (New Tournament, of
-those marked ready then) or switches the lobby back to Versus. Switching to Versus while a tournament is on asks first
+those in the player places then) or switches the lobby back to Versus. Switching to Versus while a tournament is on asks first
 ("Call Off the Tournament?").
 
 **Seeding.** The owner's game draws a number from the system's random source and shuffles the entrants with it
@@ -4097,7 +4102,7 @@ is known ("A won by walkover"). The owner leaving closes the lobby, and the tour
 during a tournament is a spectator of it.
 
 **Protocol.** LOBBY_VERSION 3. STATE (now 608 bytes) carries after the lobby the mode and the bracket: state, size,
-number of entrants, the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
+number of entrants, the Entrants rule, the tournament's number and seed, the next match, the champion, the match on, the entrants' ids
 and names, the leaves, each match's winner and how it was decided (bye, walkover, played), who left. ALIVE (40 bytes)
 carries the match whose result the member has and the result. Nothing else changed; the two players' traffic and the
 spectators' are as before. A game of 0.1.38.9 (lobby version 2) that joins a new lobby is told "The lobby owner's game
@@ -4109,7 +4114,9 @@ game in English, are translated where they are shown like the others ("%s won th
 the champion!", "Tournament: %d entrants" and five whole lines).
 
 **Testing switches.** `BT3_LOBBY_DO` has `waitready <n>` (until n places are ready), `tour` (draw a tournament), `next`
-(start its next match once it can), `waittour` (until it is over); `rule 5 1` is the mode.
+(start its next match once it can), `waittour` (until it is over); `rule 5 1` is the mode, `rule 6 <step>` the
+entrants. Pictures of the lobby's page with 2, 4 (after 5 and back: the fifth a spectator again) and 8 player places
+were looked at.
 
 Tested (this machine, offscreen, 127.0.0.1, by room code through a local copy of the Worker over SQLite; every copy
 with the virtual test pad, the players fed the random-press table, 60 s battles at 100%, rollback 8; `BT3_HASH` of
