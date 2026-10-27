@@ -53,6 +53,12 @@ Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) pla
 and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
 a11y_<code>.txt of the same kind, and lines of your own go into a11y_<code>_own.txt, which no update replaces.
 
+Updates: once per start the game asks GitHub whether there is a newer release (F1 > Misc > "Check for updates"
+turns that off). If there is, the main menu says so and F1 offers Update now: the new release is downloaded in the
+background and checked, and Restart now installs it over this folder and starts the new version (if anything goes
+wrong, every file is put back). Your saves, settings (bt3_settings.txt), game data (gamedata/, mods in it), texture
+packs, songs and stages are never touched. Updating by hand (the new files copied over the old ones) works as before.
+
 This package contains no game data. The game's data comes from your disc and stays on your computer.
 
 The port's own code is under the GNU AGPL, version 3 (licenses/tenkaichi3decomp-agpl.txt; code from before the

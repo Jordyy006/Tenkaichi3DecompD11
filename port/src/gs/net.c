@@ -67,6 +67,7 @@ static const uint32_t kVersion = NET_VERSION;
 #include "net_relay.h"
 #include "net_chat.h"
 #include "net_lobby.h"
+#include "net_update.h"
 static int sLobbyOther;
 
 /* What the meter shows (ui.cpp): the round trip time, and per second how often the game went back, how far, and
@@ -3309,9 +3310,25 @@ const char *Port_LobbyQuickRefusal(void) {
     return fp_quick_refusal(text, sizeof(text))[0] != '\0' ? text : NULL;
 }
 
+/* An update is being downloaded or waits to be installed (gs/net_update.c): no new online session meanwhile (the other
+   player would soon be on another version). The line that says so, in the chosen language; NULL: online play is on. */
+const char *Port_OnlineBlocked(void) {
+    const char *t;
+    if (!Update_BlocksOnline()) {
+        return NULL;
+    }
+    t = MenuTranslation_PortText("update/online_off"); /* (menu_translation.h: PORT_TEXT_UPDATE_ONLINE_OFF) */
+    return t != NULL && t[0] != '\0' ? t : Update_OnlineNote();
+}
+
 int Port_LobbyStart(int host, const char *address, int port) {
     struct sockaddr_in local;
 
+    if (Port_OnlineBlocked() != NULL) { /* (said by the screens through Port_LobbyError) */
+        snprintf(sCodeError, sizeof(sCodeError), "%s", Port_OnlineBlocked());
+        sLobby = -3;
+        return sLobby;
+    }
     if (lobby_hold(PEND_ADDR, host, address, port)) {
         return sLobby;
     }

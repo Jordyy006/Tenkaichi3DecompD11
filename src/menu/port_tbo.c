@@ -242,6 +242,7 @@ extern void Port_LobbyLaunch(void);
 extern int Port_NetSessionsEnded(void); /* gs/net.c */
 extern const char *Port_LobbyCode(void);
 extern const char *Port_LobbyError(void);
+extern const char *Port_OnlineBlocked(void); /* (gs/net.c) the line that says why, while an update is under way; NULL: online is on */
 extern int Port_LobbyOther(void);
 extern void Port_LobbyBackground(int on);
 extern int Port_LobbyInBackground(void);
@@ -525,11 +526,17 @@ static void Tb_RollText(char *out, s32 roll) {
    Room, a lobby) both games need the same data, modified or not, which the two compare when they connect. Fighter
    mods are switched off by themselves while a session runs (plat_mods.c); what is checked is the rest of the data the
    game computes with (the gameplay fingerprint, plat_fprint.c: files added under gamedata/mods count). No game goes
-   online before its own fingerprint is known. Returns 1 when the search may start; else the note or the "No Quick
-   Match" window says why. */
+   online before its own fingerprint is known, nor while an update is under way (port/src/gs/net_update.c). Returns 1
+   when the search may start; else the note or the "No Quick Match" window says why. */
 static s32 Tb_Vanilla(s32 quick) {
     s32 state = Port_DataFingerprintNeed();
+    const char *off = Port_OnlineBlocked(); /* an update is under way (port/src/gs/net_update.c): no new session */
 
+    if (off != NULL) {
+        Snd_PlaySe(1, 2);
+        Tb_Note((char *)off);
+        return 0;
+    }
     if (state != 1) {
         Tb_Note("CHECKING YOUR GAME DATA AGAINST THE DISC... TRY AGAIN IN A MOMENT");
         return 0;

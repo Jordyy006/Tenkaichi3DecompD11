@@ -38,10 +38,9 @@ int Port_AspectMilli(void);
 extern "C" int gPortTboTyping;                     // gs_input.c: a keypad of Tenkaichi Budokai Online takes text
 extern "C" int PortInput_TboEvent(const SDL_Event *ev);
 extern "C" void PortInput_TboClipboard(void);      // ... and its "Copy Code": onto the clipboard, from this thread
-void Match_UpdateAsk(void);                    // net_match.c: asks GitHub for the newest release, once
-int Match_UpdateLatest(void);                  // ... its number (0.1.33 is 133), 0 while unknown
-const char *Match_UpdateTag(void);
-int Match_UpdateHasNewer(void);
+int Port_GameMode(void);                       // a11y_game.c: the game's progress mode (4 the main menu, 80 the port's screens)
+const char *Port_OnlineBlocked(void);          // gs/net.c: an update is under way, no new online session (the line), or NULL
+int Lobby_Active(void);                        // gs/net_lobby.c: this copy is in a lobby
 int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
 int Port_LateInput(void);                     // plat_stub.c: "Low input lag", the blanks are waited for before the pad read
 void Port_LateInputSet(int on);
@@ -548,7 +547,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
     io.IniFilename = NULL; // no window-layout file next to the game
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad; // (a controller opens it too: START + SELECT)
     style();
-    PortUpdate_Cleanup();
+    Update_Cleanup(); // (the files the last update replaced, kept until this start: gs/net_update.c)
     for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
         FILE *fp = fopen(fonts[i], "rb");
         if (fp != NULL) {
@@ -800,56 +799,6 @@ static void quick_status(int state, int &lastState, const char *name) {
     }
 }
 
-static void update_widget(int targetRelease, bool neededForOnline) {
-    PortUpdateStatus st = PortUpdate_GetStatus();
-    if (st == PORT_UPDATE_IDLE) {
-        if (neededForOnline) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
-            ImGui::TextWrapped("Update available. Online servers are unreachable until you update.");
-            ImGui::PopStyleColor();
-        }
-        if (ImGui::Button("Update now")) {
-            PortUpdate_Start(targetRelease);
-        }
-        ImGui::SetItemTooltip("Download and install the update automatically.");
-        ImGui::SameLine();
-        if (ImGui::Button("Download page")) {
-            SDL_OpenURL("https://github.com/" PORT_UPDATE_REPO "/releases/latest");
-        }
-        ImGui::SetItemTooltip("Opens the release page in your browser.");
-    } else if (st == PORT_UPDATE_DOWNLOADING) {
-        float prog = PortUpdate_GetProgress();
-        size_t got = 0, total = 0;
-        PortUpdate_GetBytes(&got, &total);
-        char progBuf[64];
-        if (total > 0) {
-            SDL_snprintf(progBuf, sizeof(progBuf), "Downloading: %.1f MB / %.1f MB", (float)got / 1048576.0f, (float)total / 1048576.0f);
-        } else {
-            SDL_snprintf(progBuf, sizeof(progBuf), "Downloading: %.1f MB", (float)got / 1048576.0f);
-        }
-        ImGui::ProgressBar(prog, ImVec2(240.0f, 0.0f), progBuf);
-    } else if (st == PORT_UPDATE_EXTRACTING) {
-        ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Extracting update files...");
-    } else if (st == PORT_UPDATE_READY) {
-        ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f), "Update ready!");
-        ImGui::SameLine();
-        if (ImGui::Button("Restart game")) {
-            PortUpdate_Restart();
-        }
-        ImGui::SetItemTooltip("Relaunches the game with the new update applied.");
-    } else if (st == PORT_UPDATE_ERROR) {
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", PortUpdate_GetError());
-        ImGui::SameLine();
-        if (ImGui::Button("Retry")) {
-            PortUpdate_Start(targetRelease);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Download page")) {
-            SDL_OpenURL("https://github.com/" PORT_UPDATE_REPO "/releases/latest");
-        }
-    }
-}
-
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
     static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
@@ -868,11 +817,21 @@ static void build_net(void) {
     if (ImGui::Begin("Dragon Net Battle", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         {
             int min = 0, latest = 0, mine = Port_LobbyRelease(&min, &latest);
-            PortUpdateStatus updSt = PortUpdate_GetStatus();
-            if (min > mine || latest > mine || updSt != PORT_UPDATE_IDLE) {
-                int target = latest > mine ? latest : min;
-                if (target == 0) target = PORT_RELEASE + 1;
-                update_widget(target, min > mine);
+            if (min > mine) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+                ImGui::TextWrapped("Update available. Online servers are unreachable until you update.");
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("You have 0.%d.%d; 0.%d.%d or newer is needed. github.com/z3xox/Tenkaichi3Decomp/releases", mine / 100, mine % 100, min / 100, min % 100);
+                ImGui::Separator();
+            } else if (latest > mine) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: release 0.%d.%d.", latest / 100, latest % 100);
+                ImGui::TextDisabled("F1 to update, or github.com/z3xox/Tenkaichi3Decomp/releases");
+                ImGui::Separator();
+            }
+            if (Port_OnlineBlocked() != NULL) { // an update is under way (gs/net_update.c): no new session starts
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+                ImGui::TextWrapped("%s", Port_OnlineBlocked());
+                ImGui::PopStyleColor();
                 ImGui::Separator();
             }
         }
@@ -1586,32 +1545,239 @@ static void effects_tab(PortVideo &v) {
                           "emulators show it upscaled). Off: as soft as the PlayStation 2 draws it. No difference at 1x.");
 }
 
-// ---- "an update is available" ----
-// Once per run the newest published release's number is asked of GitHub (net_match.c), unless "Check for updates" is
-// off. If it is newer than this program: a line over the picture for ten seconds, and a line with a button to the
-// release page at the top of this window for the rest of the run. Nothing is downloaded by the game.
-// Not when nobody is looking (the offscreen and dummy video drivers); BT3_UPDATE_CHECK=1 / 0 says otherwise, and
-// BT3_UPDATE_LATEST=<number> is taken as the answer without asking (testing).
-static int sUpdCheck = -1; // the setting; -1 not read yet
-static bool sUpdAsked, sUpdTold;
+// ---- the automatic update (gs/net_update.c) ----
+// (Based on PR #107 by JosephLlacchua: the in-game download, its progress bar, the restart into the new version.)
+// A few seconds after start the newest published release is asked of GitHub, unless "Check for updates" is off. If it
+// is newer than this build (its full number: 0.1.38.9; a local "dev" build is offered nothing): a line over the main
+// menu and the online screens, and at the top of this window Update now / Later / What's new. Update now downloads
+// and checks it in the background; Restart now (never during an online session) installs it over the folder and
+// starts the new version. Later: no line over the menus until the next start.
+// Not when nobody is looking (the offscreen and dummy video drivers); BT3_UPDATE_CHECK=1 / 0 says otherwise.
+// BT3_UPDATE_AUTO=1 (testing) presses Update now and Restart now by itself.
+static int sUpdCheck = -1;   // the setting; -1 not read yet
+static bool sUpdAsked;       // the check was started (or decided against)
+static Uint64 sUpdSince;     // when the game was first ready (the check waits a few seconds after it)
+static bool sUpdLater;       // "Later": no line over the menus for the rest of this run
+static bool sUpdNotes;       // "What's new" is open
+static bool sUpdTold;        // the result of the last start's update was put over the picture
+static char sUpdWhy[256];    // Restart now could not be done: why
+static void set_notice(const char *text, Uint64 ms);
 
-static int update_latest(void) {
-    const char *fake = SDL_getenv("BT3_UPDATE_LATEST");
+// {version} and {percent} of a port catalog line put in (the English when the language has none)
+static void upd_fill(char *out, size_t size, const char *id, const char *english, const char *version, int percent) {
+    const char *line = MenuTranslation_PortText(id);
+    char num[16];
+    size_t n = 0;
+
+    if (line == NULL || line[0] == '\0') {
+        line = english;
+    }
+    SDL_snprintf(num, sizeof(num), "%d", percent);
+    for (size_t i = 0; line[i] != '\0' && n + 1 < size; i++) {
+        const char *put = SDL_strncmp(line + i, "{version}", 9) == 0 ? version : SDL_strncmp(line + i, "{percent}", 9) == 0 ? num : NULL;
+        if (put != NULL) {
+            for (size_t k = 0; put[k] != '\0' && n + 1 < size; k++) {
+                out[n++] = put[k];
+            }
+            i += 8;
+        } else {
+            out[n++] = line[i];
+        }
+    }
+    out[n] = '\0';
+}
+
+static int upd_percent(const UpdateStatus &u) {
+    return u.total > 0 ? (int)(u.got * 100 / u.total) : 0;
+}
+
+static bool upd_online(void) { // an online session or a lobby is on: it is never interrupted
+    return Port_NetActive() || Lobby_Active() || Port_NetSpectating();
+}
+
+static void upd_restart(void) {
+    sUpdWhy[0] = '\0';
+    if (upd_online()) {
+        SDL_strlcpy(sUpdWhy, "Finish the online session first.", sizeof(sUpdWhy));
+        return;
+    }
+    Update_Install(); // (in a thread: update_tick starts the new version when it is done)
+}
+
+static void update_tick(void) {
     if (sUpdCheck < 0) {
         sUpdCheck = Port_Setting("update_check", 1) != 0;
     }
-    if (fake != NULL) {
-        return SDL_atoi(fake);
+    if (!sReady) {
+        return;
     }
-    if (!sUpdAsked) {
-        const char *drv = SDL_GetCurrentVideoDriver(), *env = SDL_getenv("BT3_UPDATE_CHECK");
-        bool seen = drv == NULL || (SDL_strcmp(drv, "offscreen") != 0 && SDL_strcmp(drv, "dummy") != 0);
-        sUpdAsked = true;
-        if (env != NULL ? SDL_atoi(env) != 0 : (sUpdCheck != 0 && seen)) {
-            Match_UpdateAsk();
+    {
+        UpdateStatus u;
+        Update_Status(&u);
+        if (u.state == UPD_INSTALLED) { // the files are swapped: the new version starts, this one closes
+            static bool gone;
+            if (!gone) {
+                gone = true;
+                Port_SettingsWrite();
+                if (Update_Relaunch()) {
+                    exit(0); // (as closing the window does)
+                }
+                SDL_strlcpy(sUpdWhy, "The update is installed, but the new version could not be started: close the game and start it again.",
+                            sizeof(sUpdWhy));
+            }
         }
     }
-    return sUpdCheck != 0 || SDL_getenv("BT3_UPDATE_CHECK") != NULL ? Match_UpdateLatest() : 0;
+    if (!sUpdTold) { // the update installed before this start
+        const char *ver;
+        char line[256];
+        sUpdTold = true;
+        if (Update_LastResult(&ver) > 0) {
+            upd_fill(line, sizeof(line), PORT_TEXT_UPDATE_DONE, "Updated to {version}.", ver, 0);
+            set_notice(line, 10000);
+        }
+    }
+    if (!sUpdAsked) {
+        if (sUpdSince == 0) {
+            sUpdSince = SDL_GetTicks();
+        } else if (SDL_GetTicks() - sUpdSince >= 4000) {
+            const char *drv = SDL_GetCurrentVideoDriver(), *env = SDL_getenv("BT3_UPDATE_CHECK");
+            bool seen = drv == NULL || (SDL_strcmp(drv, "offscreen") != 0 && SDL_strcmp(drv, "dummy") != 0);
+            sUpdAsked = true;
+            if (env != NULL ? SDL_atoi(env) != 0 : (sUpdCheck != 0 && seen)) {
+                Update_Check();
+            }
+        }
+    }
+    if (SDL_getenv("BT3_UPDATE_AUTO") != NULL && SDL_atoi(SDL_getenv("BT3_UPDATE_AUTO")) != 0) { // (testing)
+        UpdateStatus u;
+        Update_Status(&u);
+        if (u.state == UPD_AVAILABLE && u.canInstall) {
+            Update_Download();
+        } else if (u.state == UPD_READY && !upd_online()) {
+            upd_restart();
+        }
+    }
+}
+
+// The line over the main menu and the online screens (empty: none now).
+static void update_line(char *out, size_t size) {
+    UpdateStatus u;
+    int mode = Port_GameMode();
+
+    out[0] = '\0';
+    if (!sReady || sOpen || (mode != 4 && mode != 80)) {
+        return;
+    }
+    Update_Status(&u);
+    if (u.state == UPD_AVAILABLE && !sUpdLater) {
+        upd_fill(out, size, PORT_TEXT_UPDATE_AVAILABLE, "Update {version} available. F1 to update.", u.latest, 0);
+    } else if (u.state == UPD_DOWNLOADING || u.state == UPD_VERIFYING) {
+        upd_fill(out, size, PORT_TEXT_UPDATE_DOWNLOADING, "Downloading update {version}: {percent}%", u.latest, upd_percent(u));
+    } else if (u.state == UPD_READY) {
+        upd_fill(out, size, PORT_TEXT_UPDATE_READY, "Update {version} is ready. F1 > Restart now.", u.latest, 0);
+    }
+}
+
+// The top of the settings window: what there is to update, and the buttons.
+static void update_panel(void) {
+    UpdateStatus u;
+    const char *ver;
+    int last = Update_LastResult(&ver);
+    const ImVec4 gold(1.0f, 0.85f, 0.3f, 1.0f), red(1.0f, 0.55f, 0.35f, 1.0f), green(0.45f, 0.85f, 0.5f, 1.0f);
+    bool any = false;
+
+    Update_Status(&u);
+    if (last > 0 && u.state < UPD_AVAILABLE) {
+        ImGui::TextColored(green, "Updated to %s.", ver);
+        any = true;
+    }
+    if (u.state >= UPD_AVAILABLE) {
+        any = true;
+        ImGui::AlignTextToFramePadding();
+        if (u.state == UPD_AVAILABLE) {
+            ImGui::TextColored(gold, "Update %s available (this is %s).", u.latest, u.current);
+            if (u.canInstall) {
+                ImGui::SameLine();
+                if (ImGui::Button("Update now")) {
+                    Update_Download();
+                }
+                ImGui::SetItemTooltip("Downloads the new version in the background and checks it; you go on playing\n"
+                                      "meanwhile (online play waits until it is installed). Then Restart now installs it.\n"
+                                      "Your saves, settings, game data, mods and texture packs are not touched.");
+                if (!sUpdLater) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Later")) {
+                        sUpdLater = true;
+                    }
+                    ImGui::SetItemTooltip("No reminder over the menus until the next start.");
+                }
+            }
+        } else if (u.state == UPD_DOWNLOADING) {
+            ImGui::TextColored(gold, "Downloading %s: %d%% (%.1f of %.1f MB)", u.latest, upd_percent(u), (double)u.got / 1e6, (double)u.total / 1e6);
+        } else if (u.state == UPD_VERIFYING) {
+            ImGui::TextColored(gold, "Checking the download of %s (its signature)...", u.latest);
+        } else if (u.state == UPD_READY) {
+            ImGui::TextColored(green, "Update %s is downloaded and verified.", u.latest);
+            ImGui::SameLine();
+            bool busy = upd_online();
+            if (busy) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("Restart now")) {
+                upd_restart();
+            }
+            if (busy) {
+                ImGui::EndDisabled();
+            }
+            ImGui::SetItemTooltip(busy ? "Not during an online session: finish it first."
+                                       : "Installs the update over the game's folder and starts the new version (if anything\n"
+                                         "goes wrong, every file is put back). Your saves and settings are not touched.");
+        } else if (u.state == UPD_INSTALLING || u.state == UPD_INSTALLED) {
+            ImGui::TextColored(gold, "Installing %s...", u.latest);
+        } else if (u.state == UPD_FAILED) {
+            ImGui::PushStyleColor(ImGuiCol_Text, red);
+            ImGui::TextWrapped("The update to %s was not installed: %s", u.latest, u.why);
+            ImGui::PopStyleColor();
+            if (ImGui::Button("Try again")) {
+                Update_Download();
+            }
+            ImGui::SameLine();
+        }
+        if (u.state != UPD_FAILED) {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(sUpdNotes ? "Hide what's new" : "What's new")) {
+            sUpdNotes = !sUpdNotes;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Release page")) {
+            SDL_OpenURL(u.page);
+        }
+        ImGui::SetItemTooltip("Opens the release page in your browser. To update by hand, copy the new files over the old ones.");
+        if (u.state == UPD_DOWNLOADING || u.state == UPD_VERIFYING) {
+            ImGui::ProgressBar(u.state == UPD_VERIFYING ? 1.0f : (float)upd_percent(u) / 100.0f, ImVec2(-1.0f, 0.0f), "");
+        }
+        if (!u.canInstall && u.cannot[0] != '\0') {
+            ImGui::TextDisabled("%s", u.cannot);
+        }
+        if (Port_OnlineBlocked() != NULL) {
+            ImGui::TextDisabled("%s", Port_OnlineBlocked());
+        }
+        if (sUpdWhy[0] != '\0') {
+            ImGui::PushStyleColor(ImGuiCol_Text, red);
+            ImGui::TextWrapped("%s", sUpdWhy);
+            ImGui::PopStyleColor();
+        }
+        if (sUpdNotes) {
+            const char *notes = Update_Notes();
+            ImGui::BeginChild("notes", ImVec2(0.0f, U(180.0f)), ImGuiChildFlags_Borders);
+            ImGui::TextWrapped("%s", notes[0] != '\0' ? notes : "(The release has no notes.)");
+            ImGui::EndChild();
+        }
+    }
+    if (any) {
+        ImGui::Separator();
+    }
 }
 
 static void misc_tab(void) {
@@ -1622,15 +1788,11 @@ static void misc_tab(void) {
             Port_SettingSave("update_check", sUpdCheck);
             Port_SettingsWrite();
         }
-        ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
-                              "than this one. If an update is available, you can install it automatically.");
+        ImGui::SetItemTooltip("Once per start, ask GitHub for the newest release and say so if it is newer than this one.\n"
+                              "Nothing is downloaded until you press Update now (at the top of this window).");
         ImGui::SameLine();
-#if defined(PORT_SUBRELEASE) && PORT_SUBRELEASE > 0
-        ImGui::TextDisabled("(installed: v0.%d.%d.%d)", PORT_RELEASE / 100, PORT_RELEASE % 100, PORT_SUBRELEASE);
-#else
-        ImGui::TextDisabled("(installed: v0.%d.%d)", PORT_RELEASE / 100, PORT_RELEASE % 100);
-#endif
-        ImGui::SetItemTooltip("The version of Tenkaichi3Decomp currently running.");
+        ImGui::TextDisabled("(installed: %s)", Update_Version()); // (PR #107: the version that is running)
+        ImGui::SetItemTooltip("The version of Tenkaichi3Decomp currently running (\"dev\": built locally, never offered updates).");
     }
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
     static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
@@ -2172,30 +2334,7 @@ static void build(void) {
             ImGui::TextDisabled("View: %s", spec_view_name(Port_NetSpecView()));
             ImGui::Separator();
         }
-        {
-            int latest = update_latest();
-            bool hasUpdate = Match_UpdateHasNewer() || (latest > PORT_RELEASE);
-            PortUpdateStatus updSt = PortUpdate_GetStatus();
-            if (hasUpdate || updSt != PORT_UPDATE_IDLE) {
-                const char *tag = Match_UpdateTag();
-                ImGui::AlignTextToFramePadding();
-                if (tag != NULL && tag[0] != '\0') {
-#if defined(PORT_SUBRELEASE) && PORT_SUBRELEASE > 0
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: %s (installed: v0.%d.%d.%d).", tag,
-                                       PORT_RELEASE / 100, PORT_RELEASE % 100, PORT_SUBRELEASE);
-#else
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: %s (installed: v0.%d.%d).", tag,
-                                       PORT_RELEASE / 100, PORT_RELEASE % 100);
-#endif
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: 0.%d.%d (installed: 0.%d.%d).", latest / 100, latest % 100,
-                                       PORT_RELEASE / 100, PORT_RELEASE % 100);
-                }
-                ImGui::SameLine();
-                update_widget(latest > PORT_RELEASE ? latest : PORT_RELEASE + 1, false);
-                ImGui::Separator();
-            }
-        }
+        update_panel();
         // the tabs in a region of their own, above a last line that is always there
         ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
@@ -2284,9 +2423,14 @@ void Ui_DrawAgain(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target) {
     SDL_EndGPURenderPass(pass);
 }
 
-static char sNotice[160];
+static char sNotice[256];
 static Uint64 sNoticeUntil;
 static volatile int sNoticeNew;
+
+static void set_notice(const char *text, Uint64 ms) { // (from this thread: shown at once, for `ms`)
+    SDL_strlcpy(sNotice, text, sizeof(sNotice));
+    sNoticeUntil = SDL_GetTicks() + ms;
+}
 
 extern "C" void Port_UiNotice(const char *text) {
     SDL_strlcpy(sNotice, text != NULL ? text : "", sizeof(sNotice));
@@ -2750,17 +2894,9 @@ static bool frame_build(void) {
             }
         }
     }
-    if (sReady && !sUpdTold && (Match_UpdateHasNewer() || update_latest() > PORT_RELEASE) && SDL_GetTicks() >= sNoticeUntil) {
-        int latest = update_latest(); // (told once, and not over another notice)
-        const char *tag = Match_UpdateTag();
-        sUpdTold = true;
-        if (tag != NULL && tag[0] != '\0') {
-            SDL_snprintf(sNotice, sizeof(sNotice), "Update available: %s. F1 for settings.", tag);
-        } else {
-            SDL_snprintf(sNotice, sizeof(sNotice), "Update available: 0.%d.%d. F1 for settings.", latest / 100, latest % 100);
-        }
-        sNoticeUntil = SDL_GetTicks() + 10000;
-    }
+    update_tick();
+    char updLine[256];
+    update_line(updLine, sizeof(updLine)); // (the update's line over the main menu and the online screens)
     bool notice = sNotice[0] != '\0' && SDL_GetTicks() < sNoticeUntil;
     if (sNoticeNew) { // (set from the game's side: the time starts when it is first drawn)
         sNoticeNew = 0;
@@ -2789,7 +2925,8 @@ static bool frame_build(void) {
     bool watched = sReady && Port_NetWatchers() > 0 && !sOpen;  // a player's: who watches the match
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat && !banner && !saving && !watched)) {
+    bool upd = updLine[0] != '\0';
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat && !banner && !saving && !watched && !upd)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -2904,6 +3041,16 @@ static bool frame_build(void) {
     }
     if (watched) {
         watchers_line();
+    }
+    if (upd) { // the update's line (update_line): at the top, over the main menu and the online screens
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.035f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowBgAlpha(0.80f);
+        if (ImGui::Begin("##update", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                               ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", updLine);
+        }
+        ImGui::End();
     }
     if (notice) { // a line over the picture for a few seconds (the end of an online match)
         ImGuiIO &io = ImGui::GetIO();
