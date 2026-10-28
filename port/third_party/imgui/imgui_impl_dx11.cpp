@@ -51,7 +51,6 @@
 #include <stdio.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
-#ifdef _MSC_VER
 #include <windows.h>
 // Tenkaichi3Decomp: D3DCompile is not linked: d3dcompiler_47.dll is loaded when the first shader is made (the program's
 // link line stays as it is), and this is the one change to the upstream file (v1.92.9b).
@@ -71,7 +70,6 @@ static HRESULT ImGui_ImplDX11_D3DCompile(LPCVOID src, SIZE_T len, LPCSTR srcName
     return fn(src, len, srcName, defines, include, entry, target, f1, f2, code, err);
 }
 #define D3DCompile ImGui_ImplDX11_D3DCompile
-#endif
 
 // Clang/GCC warnings with -Weverything
 #if defined(__clang__)
